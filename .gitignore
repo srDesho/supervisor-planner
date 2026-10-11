@@ -1,0 +1,92 @@
+# ============================================
+# SECRETOS — NUNCA SUBIR
+# ============================================
+.env
+.env.local
+.env.*.local
+credentials/
+*.json.key
+*.pem
+
+# ============================================
+# CLAUDE CODE / AI TOOLS
+# ============================================
+.claude/
+.cursor/
+.aider*
+.continue/
+
+# ============================================
+# DATOS LOCALES / VOLÚMENES DOCKER
+# ============================================
+waha_sessions/
+waha_sessions_old/
+waha_sessions_old_backup/
+data/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================
+# PYTHON
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ============================================
+# ENTORNOS VIRTUALES
+# ============================================
+.venv/
+venv/
+ENV/
+env/
+
+# ============================================
+# TESTING
+# ============================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================
+# IDE / EDITOR
+# ============================================
+.vscode/*
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================
+# SISTEMA OPERATIVO
+# ============================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================
+# TEMPORALES / BACKUPS
+# ============================================
+*.bak
+*.tmp
+*.temp
+estado_proyecto.txt
+analisis_proyecto.txt
+
+# Análisis interno (no se sube)
+ANALISIS_PROYECTO.md

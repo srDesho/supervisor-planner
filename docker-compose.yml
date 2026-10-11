@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supervisor-planner-app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+    env_file:
+      - .env
+    environment:
+      - TZ=America/La_Paz
+    depends_on:
+      - waha
+
+  waha:
+    image: devlikeapro/waha:gows
+    container_name: supervisor-waha
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - WAHA_API_KEY=${WAHA_API_KEY}
+      - WHATSAPP_DEFAULT_SESSION=${WAHA_SESSION:-default}
+      - WAHA_LOG_LEVEL=info
+      - WHATSAPP_DEFAULT_ENGINE=GOWS
+      - TZ=America/La_Paz
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-admin}
+      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-True}
+    volumes:
+      - waha_sessions:/app/.sessions
+      
+volumes:
+  waha_sessions:

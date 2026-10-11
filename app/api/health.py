@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter
 
 from app.config import get_settings
-from app.sheets.client import GoogleSheetsClient
+from app.core.singletons import is_sheets_connected
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,9 @@ def health_check():
     """
     settings = get_settings()
     try:
-        client = GoogleSheetsClient()
-        sheets_status = "connected" if client.is_connected else "disconnected"
+        # Shared client state only: the Docker healthcheck runs every 30 s, so
+        # building a client here would spend Sheets quota on every probe.
+        sheets_status = "connected" if is_sheets_connected() else "disconnected"
     except Exception as e:
         logger.error(f"Health check failed to verify Google Sheets connectivity: {e}")
         sheets_status = "unhealthy"

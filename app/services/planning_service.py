@@ -48,6 +48,7 @@ from app.whatsapp.templates import (
     MSG_RUTA_LIST_BAD_PAGE
 )
 from app.whatsapp.client import WhatsAppClient
+from app.sheets.client import run_in_sheets_thread
 from app.sheets.masters import MastersService
 from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
 from app.services.supervisor_service import SupervisorService
@@ -72,14 +73,20 @@ class PlanningService:
         conversation_service: Optional[ConversationService] = None,
         audit_service: Optional[AuditService] = None
     ):
+        # Defaults are the process-wide singletons (one Sheets client, warm caches);
+        # tests inject their own fakes. See app/core/singletons.py.
+        from app.core.singletons import (
+            get_audit_service, get_masters_service, get_planning_repo,
+            get_supervisor_service, get_whatsapp_client,
+        )
         self.settings = get_settings()
-        self.supervisor_svc = supervisor_service or SupervisorService()
+        self.supervisor_svc = supervisor_service or get_supervisor_service()
         self.conversation_svc = conversation_service or ConversationService()
-        self.audit_svc = audit_service or AuditService()
+        self.audit_svc = audit_service or get_audit_service()
 
-        self.whatsapp_client = whatsapp_client or WhatsAppClient()
-        self.sheets_repo = sheets_repo or GoogleSheetsPlanningRepository()
-        self.masters_service = masters_service or MastersService()
+        self.whatsapp_client = whatsapp_client or get_whatsapp_client()
+        self.sheets_repo = sheets_repo or get_planning_repo()
+        self.masters_service = masters_service or get_masters_service()
 
     async def handle_message(
         self,
@@ -97,7 +104,7 @@ class PlanningService:
             return
 
         # 2. Authenticate. Not in SUPERVISORES (or inactive) => zero trace.
-        supervisor = self.supervisor_svc.authenticate(phone)
+        supervisor = await run_in_sheets_thread(self.supervisor_svc.authenticate, phone)
         if not supervisor:
             return
 
@@ -118,13 +125,15 @@ class PlanningService:
         # Silencio después de registrado: si ya tiene plan activo para la fecha y está en IDLE.
         # Una fila PENDIENTE_ESCALADO no es un plan: quien fue escalado planifica con normalidad.
         fecha_trabajo = calculate_work_date(now)
-        active = self.sheets_repo.find_active(
+        active = await run_in_sheets_thread(
+            self.sheets_repo.find_active,
             fecha_trabajo.strftime("%Y-%m-%d"),
             sede, supervisor_name
         )
         if is_real_planning(active) and step == "IDLE":
             if intent["type"] in ("unknown", "confirm", "correct"):
-                self.audit_svc.log(
+                await run_in_sheets_thread(
+                    self.audit_svc.log,
                     phone=phone,
                     whatsapp_id=chat_id,
                     supervisor=supervisor_name,
@@ -237,7 +246,8 @@ class PlanningService:
         zona = supervisor.get("Zona")
         if not zona or not str(zona).strip():
             await self.whatsapp_client.send_message(chat_id, MSG_SUPERVISOR_NO_ZONE)
-            self.audit_svc.log(
+            await run_in_sheets_thread(
+                self.audit_svc.log,
                 phone=phone,
                 whatsapp_id=chat_id,
                 supervisor=supervisor_name,
@@ -251,11 +261,12 @@ class PlanningService:
             return
 
         supervisor_zona = str(zona).strip()
-        seller_rows = self.masters_service.get_seller_by_code_and_zone(
+        seller_rows = await run_in_sheets_thread(
+            self.masters_service.get_seller_by_code_and_zone,
             sede, codigo_erp, supervisor_zona
         )
         if not seller_rows:
-            other_seller_rows = self.masters_service.get_seller_by_code(sede, codigo_erp)
+            other_seller_rows = await run_in_sheets_thread(self.masters_service.get_seller_by_code, sede, codigo_erp)
             if other_seller_rows:
                 first_other = other_seller_rows[0]
                 vendedor_name = first_other.get("VENDEDOR", "")
@@ -266,7 +277,8 @@ class PlanningService:
                     zona_vendedor=zona_vendedor
                 )
                 await self.whatsapp_client.send_message(chat_id, msg)
-                self.audit_svc.log(
+                await run_in_sheets_thread(
+                    self.audit_svc.log,
                     phone=phone,
                     whatsapp_id=chat_id,
                     supervisor=supervisor_name,
@@ -290,7 +302,8 @@ class PlanningService:
         seller_row = seller_rows[0]
 
         # Prevenir doble registro del mismo vendedor el mismo día
-        duplicate = self.sheets_repo.find_seller_duplicate(
+        duplicate = await run_in_sheets_thread(
+            self.sheets_repo.find_seller_duplicate,
             fecha_trabajo_str, codigo_erp, supervisor_name, sede
         )
         if duplicate is not None:
@@ -303,7 +316,8 @@ class PlanningService:
                 otro_supervisor=otro_supervisor
             )
             await self.whatsapp_client.send_message(chat_id, msg)
-            self.audit_svc.log(
+            await run_in_sheets_thread(
+                self.audit_svc.log,
                 phone=phone,
                 whatsapp_id=chat_id,
                 supervisor=supervisor_name,
@@ -435,7 +449,7 @@ class PlanningService:
         sede: str,
         supervisor_name: str
     ) -> None:
-        active = self.sheets_repo.find_active(plan["fecha_trabajo"], sede, supervisor_name)
+        active = await run_in_sheets_thread(self.sheets_repo.find_active, plan["fecha_trabajo"], sede, supervisor_name)
         self.conversation_svc.set(phone, "AWAITING_CONFIRMATION", payload={"draft": plan})
 
         if is_real_planning(active):
@@ -471,14 +485,15 @@ class PlanningService:
                 "DIA": draft["dia"],
                 "ID_Mensaje_WA": message_id
             }
-            result = self.sheets_repo.upsert(draft["fecha_trabajo"], sede, supervisor_name, sheet_payload)
+            result = await run_in_sheets_thread(self.sheets_repo.upsert, draft["fecha_trabajo"], sede, supervisor_name, sheet_payload)
             is_mod = result.get("Es_Cambio") == "TRUE"
 
             self.conversation_svc.clear(phone)
             ack = MSG_UPDATED_OK if is_mod else MSG_REGISTERED_OK
             await self.whatsapp_client.send_message(chat_id, ack)
 
-            self.audit_svc.log(
+            await run_in_sheets_thread(
+                self.audit_svc.log,
                 phone=phone,
                 whatsapp_id=chat_id,
                 supervisor=supervisor_name,
@@ -639,21 +654,22 @@ class PlanningService:
             )
             return
 
-        if self.masters_service.get_seller_by_code_and_zone(sede, code, zona):
+        if await run_in_sheets_thread(self.masters_service.get_seller_by_code_and_zone, sede, code, zona):
             await self._handle_seller_code(
                 code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
             )
             return
 
         fecha_trabajo = calculate_work_date(now)
-        route_row = self.masters_service.get_route_by_code(
+        route_row = await run_in_sheets_thread(
+            self.masters_service.get_route_by_code,
             sede, zona, get_weekday_code(fecha_trabajo), code
         )
         if route_row:
             await self._propose_route(route_row, fecha_trabajo, supervisor, phone, chat_id)
             return
 
-        if self.masters_service.get_seller_by_code(sede, code):
+        if await run_in_sheets_thread(self.masters_service.get_seller_by_code, sede, code):
             # The seller exists but in another zone: same "wrong zone" answer as always.
             await self._handle_seller_code(
                 code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
@@ -678,7 +694,7 @@ class PlanningService:
 
         fecha_trabajo = calculate_work_date(now)
         weekday_code = get_weekday_code(fecha_trabajo)
-        routes = self.masters_service.get_routes_by_zone_and_day(supervisor["Sede"], zona, weekday_code)
+        routes = await run_in_sheets_thread(self.masters_service.get_routes_by_zone_and_day, supervisor["Sede"], zona, weekday_code)
         if not routes:
             await self.whatsapp_client.send_message(
                 chat_id,

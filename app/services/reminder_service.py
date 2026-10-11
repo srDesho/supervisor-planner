@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 from app.config import get_settings
 from app.business.dates import calculate_work_date, get_weekday_code, get_current_bolivia_datetime
 from app.utils.phone import normalize_phone
+from app.sheets.client import run_in_sheets_thread
 from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
 from app.sheets.supervisors_repository import SupervisorsRepository
 from app.services.supervisor_service import SupervisorService
@@ -58,12 +59,15 @@ class ReminderService:
         supervisors_repo: Optional[SupervisorsRepository] = None,
         conversation_service: Optional[ConversationService] = None
     ):
+        # Defaults are the process-wide singletons; tests inject fakes.
+        # See app/core/singletons.py.
+        from app.core.singletons import get_planning_repo, get_supervisors_repo, get_whatsapp_client
         self.settings = get_settings()
-        self.sheets_repo = sheets_repo or GoogleSheetsPlanningRepository()
-        self.supervisors_repo = supervisors_repo or SupervisorsRepository()
+        self.sheets_repo = sheets_repo or get_planning_repo()
+        self.supervisors_repo = supervisors_repo or get_supervisors_repo()
         self.supervisor_svc = SupervisorService(self.supervisors_repo)
         self.conversation_svc = conversation_service or ConversationService()
-        self.whatsapp_client = whatsapp_client or WhatsAppClient()
+        self.whatsapp_client = whatsapp_client or get_whatsapp_client()
 
     async def run_reminder_cycle(self, eval_time: Optional[datetime] = None) -> None:
         now = eval_time or get_current_bolivia_datetime()
@@ -117,9 +121,9 @@ class ReminderService:
         skipped_registered = 0
         skipped_cooldown = 0
 
-        for supervisor in self.supervisor_svc.get_all_active():
+        for supervisor in await run_in_sheets_thread(self.supervisor_svc.get_all_active):
             try:
-                if self._has_active_planning(fecha_trabajo_str, supervisor):
+                if await run_in_sheets_thread(self._has_active_planning, fecha_trabajo_str, supervisor):
                     skipped_registered += 1
                     continue
                 if not ignore_cooldown and self._within_cooldown(supervisor, now):
@@ -133,7 +137,7 @@ class ReminderService:
 
                 msg = self._build_reminder_message(supervisor, fecha_trabajo, dia_trabajo)
                 await self.whatsapp_client.send_message(phone, msg)
-                self.supervisors_repo.update_last_reminder(phone, now.strftime("%Y-%m-%d %H:%M:%S"))
+                await run_in_sheets_thread(self.supervisors_repo.update_last_reminder, phone, now.strftime("%Y-%m-%d %H:%M:%S"))
                 logger.info(f"Dispatched reminder to {supervisor.get('Nombre')} ({phone}).")
                 sent += 1
             except Exception as exc:
@@ -192,9 +196,10 @@ class ReminderService:
         fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
         pendientes: List[Dict[str, Any]] = []
 
-        for supervisor in self.supervisor_svc.get_all_active():
+        for supervisor in await run_in_sheets_thread(self.supervisor_svc.get_all_active):
             try:
-                result = self.sheets_repo.mark_escalated(
+                result = await run_in_sheets_thread(
+                    self.sheets_repo.mark_escalated,
                     fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")
                 )
                 if result.get("__created"):

@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 class SupervisorService:
     def __init__(self, repo: Optional[SupervisorsRepository] = None):
-        self.repo = repo or SupervisorsRepository()
+        from app.core.singletons import get_supervisors_repo  # shared repo/cache, see app/core/singletons.py
+        self.repo = repo or get_supervisors_repo()
 
     def authenticate(self, phone: str) -> Optional[Dict[str, Any]]:
         """

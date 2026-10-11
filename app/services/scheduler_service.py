@@ -21,7 +21,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.business.dates import get_current_bolivia_datetime
 from app.config import get_settings
 from app.services.conversation_service import ConversationService
-from app.services.reminder_service import ReminderService
+from app.core.singletons import get_reminder_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,8 @@ async def _run_cycle(origin: str) -> None:
     """Sweeps expired conversation state, then runs one reminder cycle."""
     logger.info(f"{origin}: ejecutando ciclo de recordatorio.")
     ConversationService().clear_expired()
-    reminder_svc = ReminderService()
+    # Shared instance (one Sheets client, warm caches): see app/core/singletons.py.
+    reminder_svc = get_reminder_service()
     await reminder_svc.run_reminder_cycle()
 
 

@@ -30,7 +30,9 @@ SEDE_TO_WORKSHEET = {
 }
 
 class MastersService:
-    def __init__(self):
+    def __init__(self, client: Optional[GoogleSheetsClient] = None):
+        # Sheets client used by refresh(); None -> the shared singleton client.
+        self._client = client
         # In-memory cache: sede -> list of row dicts
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         # 0 forces staleness on first access, so the cache is populated
@@ -109,7 +111,11 @@ class MastersService:
         All three regional sheets are read and the cache is replaced.
         """
         settings = get_settings()
-        client = GoogleSheetsClient()
+        if self._client is not None:
+            client = self._client
+        else:
+            from app.core.singletons import get_sheets_client
+            client = get_sheets_client()
         if not client.is_connected:
             raise GoogleSheetsError("GoogleSheetsClient is not connected – check credentials.")
 

@@ -3,9 +3,11 @@ Google Sheets client with real Service Account authentication.
 Provides convenient high‑level methods used by MastersService.
 """
 
+import asyncio
+import functools
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Callable, List, Dict, Any, Optional, TypeVar
 
 import gspread
 from gspread import Worksheet, Spreadsheet, Client
@@ -32,6 +34,30 @@ class GoogleSheetsError(RuntimeError):
     pass
 
 
+T = TypeVar("T")
+
+
+async def run_in_sheets_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """
+    Runs a blocking Sheets operation (anything that ends up in gspread/requests:
+    repository, service or client methods) in the dedicated single-thread
+    executor and awaits it WITHOUT blocking the event loop.
+
+    Every call that touches Google Sheets from async code must go through
+    here. The executor has exactly one worker (see app/core/singletons.py), so
+    all Sheets I/O in the app is serialized on one thread: gspread/requests
+    are not thread-safe, and serializing also avoids bursts of concurrent
+    requests that trigger 429 "Read requests per minute per user".
+    """
+    # Imported lazily: app.core.singletons imports this module.
+    from app.core.singletons import get_sheets_executor
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        get_sheets_executor(), functools.partial(func, *args, **kwargs)
+    )
+
+
 class GoogleSheetsClient:
     def __init__(self, credentials_path: Optional[str] = None, spreadsheet_id: Optional[str] = None):
         settings = get_settings()
@@ -40,6 +66,11 @@ class GoogleSheetsClient:
         self.is_connected: bool = False
         self._gc: Optional[Client] = None
         self._spreadsheet: Optional[Spreadsheet] = None
+        # Worksheet objects by name. spreadsheet.worksheet(name) costs one
+        # metadata request to Google each time; reusing the object halves the
+        # requests per read/write. Only used from the Sheets thread (see
+        # run_in_sheets_thread); dropped whenever an operation fails.
+        self._worksheets: Dict[str, Worksheet] = {}
         self._initialize_client()
 
     def _initialize_client(self) -> None:
@@ -67,8 +98,13 @@ class GoogleSheetsClient:
 
     def get_worksheet(self, name: str) -> Worksheet:
         self._ensure_connected()
+        cached = self._worksheets.get(name)
+        if cached is not None:
+            return cached
         try:
-            return self._spreadsheet.worksheet(name)
+            ws = self._spreadsheet.worksheet(name)
+            self._worksheets[name] = ws
+            return ws
         except WorksheetNotFound as e:
             logger.error("Worksheet '%s' not found in spreadsheet %s", name, self.spreadsheet_id)
             raise GoogleSheetsError(str(e))
@@ -86,6 +122,7 @@ class GoogleSheetsClient:
         self._ensure_connected()
         cols = max(len(headers), 10)
         ws = self._spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
+        self._worksheets[name] = ws
         if headers:
             ws.append_row(headers)
         logger.info("Created worksheet '%s' with %d header column(s).", name, len(headers))
@@ -118,6 +155,7 @@ class GoogleSheetsClient:
             )
             return []
         except APIError as e:
+            self._worksheets.pop(name, None)
             logger.error("API error while reading worksheet '%s': %s", name, e)
             raise GoogleSheetsError(str(e))
 
@@ -127,6 +165,7 @@ class GoogleSheetsClient:
             ws.append_row(row)
             logger.debug("Appended row to worksheet '%s': %s", name, row)
         except APIError as e:
+            self._worksheets.pop(name, None)
             logger.error("Failed to append row to worksheet '%s': %s", name, e)
             raise GoogleSheetsError(str(e))
 
@@ -137,6 +176,7 @@ class GoogleSheetsClient:
             ws.update(cell_range, [row])
             logger.debug("Updated row %d in worksheet '%s' with %s", row_index, name, row)
         except APIError as e:
+            self._worksheets.pop(name, None)
             logger.error("Failed to update row %d in worksheet '%s': %s", row_index, name, e)
             raise GoogleSheetsError(str(e))
 
@@ -153,5 +193,6 @@ class GoogleSheetsClient:
             logger.info("Value '%s' not found in column %d of worksheet '%s'", key_value, key_column, name)
             return None
         except APIError as e:
+            self._worksheets.pop(name, None)
             logger.error("Error searching worksheet '%s': %s", name, e)
             raise GoogleSheetsError(str(e))

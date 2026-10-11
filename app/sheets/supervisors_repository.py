@@ -29,7 +29,9 @@ _COLUMNS = [
 
 class SupervisorsRepository:
     def __init__(self, client: Optional[GoogleSheetsClient] = None):
-        self.client = client or GoogleSheetsClient()
+        # Default to the shared singleton, never a fresh instance (see app/core/singletons.py).
+        from app.core.singletons import get_sheets_client
+        self.client = client or get_sheets_client()
         if not self.client.is_connected:
             raise GoogleSheetsError("GoogleSheetsClient not connected – check credentials.")
         settings = get_settings()

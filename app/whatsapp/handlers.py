@@ -6,7 +6,7 @@ import logging
 
 from app.whatsapp.parser import ParsedWhatsAppMessage
 from app.whatsapp import idempotency
-from app.services.planning_service import PlanningService
+from app.core.singletons import get_planning_service
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,8 @@ async def handle_whatsapp_event(message: ParsedWhatsAppMessage) -> bool:
 
     idempotency.mark_processed(message.message_id)
 
-    planning_svc = PlanningService()
+    # Shared instance: it keeps no per-message state, and building a new one per
+    # message would rebuild the Sheets clients and caches (see app/core/singletons.py).
+    planning_svc = get_planning_service()
     await planning_svc.handle_message(message)
     return True

@@ -35,7 +35,9 @@ LOG_BOT_COLUMNS = [
 
 class AuditRepository:
     def __init__(self, client: Optional[GoogleSheetsClient] = None):
-        self.client = client or GoogleSheetsClient()
+        # Default to the shared singleton, never a fresh instance (see app/core/singletons.py).
+        from app.core.singletons import get_sheets_client
+        self.client = client or get_sheets_client()
         settings = get_settings()
         self.worksheet_name = settings.GOOGLE_WORKSHEET_LOG
 

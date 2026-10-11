@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class WhatsAppClient:
+    MAX_SENT_MESSAGES_KEPT = 500
+
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -22,7 +24,8 @@ class WhatsAppClient:
         self.base_url = (base_url or settings.WAHA_BASE_URL).rstrip("/")
         self.api_key = api_key or settings.WAHA_API_KEY
         self.session_name = session_name or settings.WAHA_SESSION
-        # In-memory sent message log for testing and auditing
+        # In-memory sent message log for testing and auditing. This client is a
+        # process-wide singleton, so the log is capped (oldest entries dropped).
         self.sent_messages: List[Dict[str, Any]] = []
 
     async def send_message(self, recipient_phone: str, text: str) -> bool:
@@ -62,6 +65,8 @@ class WhatsAppClient:
             "text": text,
             "payload": payload
         })
+        if len(self.sent_messages) > self.MAX_SENT_MESSAGES_KEPT:
+            del self.sent_messages[:-self.MAX_SENT_MESSAGES_KEPT]
 
         # If WAHA is configured and not running in local test mode
         if not self.base_url.startswith("http://localhost") or self.api_key != "placeholder_waha_api_key":

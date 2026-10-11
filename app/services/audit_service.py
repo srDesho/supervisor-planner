@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 class AuditService:
     def __init__(self, repo: Optional[AuditRepository] = None):
-        self.repo = repo or AuditRepository()
+        from app.core.singletons import get_audit_repo  # shared repo, see app/core/singletons.py
+        self.repo = repo or get_audit_repo()
 
     def log(
         self,

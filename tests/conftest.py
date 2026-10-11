@@ -70,8 +70,22 @@ def fake_sheets() -> FakeGoogleSheetsClient:
 
 
 @pytest.fixture
-def client():
-    """FastAPI TestClient. No database overrides needed anymore."""
+def client(monkeypatch):
+    """
+    FastAPI TestClient. The lifespan's real startup work (building the Sheets
+    singletons, Sheets warm-up, APScheduler with its startup-check cycle) is
+    stubbed out: tests must never need credentials or touch the real Sheet.
+    """
+    import app.main as main_module
+
+    async def _no_startup_checks():
+        return None
+
+    monkeypatch.setattr(main_module, "init_singletons", lambda: None)
+    monkeypatch.setattr(main_module, "_startup_sheet_checks", _no_startup_checks)
+    monkeypatch.setattr(main_module, "start_scheduler", lambda: None)
+    monkeypatch.setattr(main_module, "shutdown_scheduler", lambda: None)
+    monkeypatch.setattr(main_module, "shutdown_singletons", lambda: None)
     with TestClient(app) as test_client:
         yield test_client
 

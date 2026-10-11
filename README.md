@@ -143,6 +143,7 @@ Los tests usan una hoja de cálculo simulada en memoria y no envían mensajes a 
 │   ├── main.py             # Entrypoint FastAPI y ciclo de vida
 │   ├── config.py           # Configuración (pydantic-settings) y logging
 │   ├── api/                # /health y /webhook/waha
+│   ├── core/               # Singletons: un cliente de Sheets, cachés y un hilo dedicado para todo el I/O de Sheets
 │   ├── whatsapp/           # Cliente WAHA, parser, plantillas, idempotencia, resolución de LID
 │   ├── business/           # Reglas de negocio: fechas, validación, matching, estados
 │   ├── sheets/             # Cliente de Google Sheets y repositorios

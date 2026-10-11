@@ -1,6 +1,19 @@
 # Supervisor Planner
 
-Bot de WhatsApp para automatizar la recepción, validación, confirmación y consolidación de la planificación diaria de supervisores comerciales. El supervisor escribe por WhatsApp el código de un vendedor (o `oficina` / `venta directa`); el bot valida las reglas de negocio, pide confirmación y registra el resultado en Google Sheets.
+Bot de WhatsApp para automatizar la recepción, validación, confirmación y consolidación de la planificación diaria de supervisores comerciales. El supervisor escribe por WhatsApp cómo va a trabajar el día siguiente; el bot valida las reglas de negocio, pide confirmación y registra el resultado en Google Sheets.
+
+## Comandos del bot
+
+El administrador pre-carga a los supervisores en la hoja `SUPERVISORES`; quien no esté ahí (o tenga `Activo` distinto de `TRUE`) no recibe respuesta.
+
+| Mensaje | Qué hace |
+|---|---|
+| `<código del vendedor>` (ej. `4287`) | Acompañar a ese vendedor en su ruta del día |
+| `RUTA` | Cubrir una ruta tú solo. El bot pide el código del vendedor, el código de la ruta, o `LISTA` para ver todas las rutas del día de tu zona y elegir una por su número |
+| `VENTA DIRECTA` | Venta directa, sin vendedor ni ruta |
+| `OFICINA` | Día en oficina |
+| `CONFIRMAR` / `CORREGIR` / `CANCELAR` | Responder al resumen pendiente |
+| `AYUDA` | Muestra los comandos |
 
 ## Stack
 
@@ -80,6 +93,8 @@ Todas están documentadas en `.env.example`.
 
 El Google Sheet debe contener las hojas de maestros de rutas por sede, `PLANIFICACION_DIARIA`, `SUPERVISORES` y `LOG_BOT` (esta última se crea sola si no existe). Sus nombres se configuran con las variables `GOOGLE_WORKSHEET_*` y `GOOGLE_OUTPUT_WORKSHEET`.
 
+La hoja `SUPERVISORES` lleva en la fila 1, exactamente: `Nombre | Telefono | Sede | Zona | Activo | Ultimo_Recordatorio`. El bot solo escribe `Ultimo_Recordatorio`.
+
 ## Configuración de WAHA (paso a paso)
 
 1. Genera una API key con PowerShell:
@@ -118,7 +133,7 @@ El Google Sheet debe contener las hojas de maestros de rutas por sede, `PLANIFIC
 docker compose exec app pytest -v
 ```
 
-Los tests usan una hoja de cálculo simulada en memoria, por lo que no necesitan credenciales ni red. La configuración se lee del `.env`: si cambiaste la ventana de planificación, el intervalo de recordatorios o la hora de escalamiento para pruebas manuales, algunos tests de recordatorios y escalamiento pueden fallar. Ejecútalos con los valores por defecto de `.env.example`.
+Los tests usan una hoja de cálculo simulada en memoria y no envían mensajes a WAHA, por lo que no necesitan credenciales ni red. El schedule de recordatorios se fija dentro de los tests, así que no dependen de los valores de tu `.env`.
 
 ## Estructura del proyecto
 
@@ -132,7 +147,7 @@ Los tests usan una hoja de cálculo simulada en memoria, por lo que no necesitan
 │   ├── business/           # Reglas de negocio: fechas, validación, matching, estados
 │   ├── sheets/             # Cliente de Google Sheets y repositorios
 │   ├── services/           # Planificación, supervisores, conversación, recordatorios, auditoría, scheduler
-│   └── utils/              # Normalización de teléfonos y registro de intentos no autorizados
+│   └── utils/              # Normalización de teléfonos
 ├── tests/                  # Suite pytest
 ├── scripts/                # Utilidades de verificación manual
 ├── Dockerfile

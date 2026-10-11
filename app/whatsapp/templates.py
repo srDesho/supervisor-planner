@@ -65,13 +65,31 @@ MSG_SELECTION_TOO_MANY_ERRORS = (
     "❌ Demasiados intentos inválidos. Envía nuevamente tu código de vendedor."
 )
 
-MSG_VENTA_ASK_CODE = (
-    "🛒 ¿Cuál es el código del vendedor cuya ruta vas a cubrir?\n\n"
-    "Escribe solo el código (ej. 1691) o *CANCELAR* para salir."
+MSG_RUTA_ASK_CODE = (
+    "🚗 ¿Qué ruta vas a cubrir?\n\n"
+    "Envía el código del vendedor (ej. 4287) o el código de la ruta (ej. 105).\n\n"
+    "O envía *LISTA* para ver todas las rutas del día."
 )
 
-MSG_VENTA_CODE_INVALID = (
-    "⚠️ No reconocí ese código. Envía solo el código del vendedor (3 a 6 dígitos), o *CANCELAR*."
+MSG_RUTA_CODE_INVALID = (
+    "⚠️ Envía el código del vendedor, el código de ruta, LISTA o CANCELAR."
+)
+
+MSG_RUTA_CODE_NOT_FOUND = (
+    "⚠️ No encontré ningún vendedor ni ruta con ese código para el día de trabajo. "
+    "Verifica el código o envía LISTA."
+)
+
+MSG_RUTA_LIST_OUT_OF_RANGE = (
+    "⚠️ Número inválido, la lista tiene {total} rutas."
+)
+
+MSG_RUTA_LIST_EMPTY = (
+    "⚠️ No hay rutas disponibles para el {dia} en tu zona."
+)
+
+MSG_RUTA_LIST_BAD_PAGE = (
+    "⚠️ Esa página no existe, la lista tiene {pages} página(s)."
 )
 
 MSG_HELP = (
@@ -79,7 +97,7 @@ MSG_HELP = (
     "Acompañar a un vendedor: escribe su código\n"
     "1691\n\n"
     "Otros casos:\n"
-    "• venta (cubrir la ruta de un vendedor tú solo)\n"
+    "• ruta (cubrir una ruta tú solo: código del vendedor, código de ruta o LISTA)\n"
     "• venta directa\n"
     "• oficina\n"
     "• AYUDA (este mensaje)\n\n"

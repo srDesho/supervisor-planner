@@ -191,17 +191,36 @@ def test_acompanamiento_summary_is_full():
     assert "Modalidad" not in summary
 
 
-def test_venta_summary_is_medium():
-    plan = _plan("VENTA", vendedor_apoyo="", vendedor_nombre="VENDEDOR UNO", codigo_erp_vendedor="4364",
-                 ruta_oficial="SC-RUTA-1", zona="N", codigo_ruta="R1")
+def test_ruta_summary_with_seller():
+    plan = _plan("RUTA", vendedor_apoyo="", vendedor_nombre="JEANNINE ARIANA CASTEDO VON BOECK",
+                 ruta_oficial="SC-DTS-RUTA-75", zona="N", codigo_ruta="226")
     summary = build_confirmation_summary(_FECHA, "4-JU", plan)
-    assert "🛒 Modalidad: VENTA (cubres la ruta solo)" in summary
-    assert "👤 VENDEDOR UNO" in summary
-    assert "Vendedor:" not in summary
-    assert "🗺️ Ruta: SC-RUTA-1" in summary
+    assert summary == (
+        "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
+        "🚗 Modalidad: RUTA (cubres la ruta solo)\n"
+        "🗺️ Ruta: SC-DTS-RUTA-75\n"
+        "👤 JEANNINE ARIANA CASTEDO VON BOECK\n"
+        "🔑 Código ruta: 226\n"
+        "📆 Fecha: 17/09/2026 (Jueves - 4-JU)\n\n"
+        "🏢 Sede: SCZ\n"
+        "👤 Supervisor: Carlos Mendoza\n\n"
+        "¿Registrar?\n\n"
+        "✅ CONFIRMAR\n"
+        "❌ CORREGIR"
+    )
 
 
-@pytest.mark.parametrize("modalidad", ["OFICINA", "VENTA DIRECTA", "ACOMPAÑAMIENTO", "VENTA"])
+@pytest.mark.parametrize("seller", ["", "N/A", None])
+def test_ruta_summary_without_seller_omits_the_line(seller):
+    plan = _plan("RUTA", vendedor_apoyo="", vendedor_nombre=seller,
+                 ruta_oficial="SC-DTS-RUTA-32", zona="N", codigo_ruta="400")
+    summary = build_confirmation_summary(_FECHA, "4-JU", plan)
+    assert "🗺️ Ruta: SC-DTS-RUTA-32\n🔑 Código ruta: 400" in summary
+    assert "ERP" not in summary and "Zona" not in summary and "Vendedor" not in summary
+    assert summary.count("👤") == 1  # only the supervisor
+
+
+@pytest.mark.parametrize("modalidad", ["OFICINA", "VENTA DIRECTA", "ACOMPAÑAMIENTO", "RUTA"])
 def test_update_summary_is_notice_plus_same_summary(modalidad):
     plan = _plan(modalidad, vendedor_nombre="X")
     update = build_confirmation_summary_update(_FECHA, "4-JU", plan)

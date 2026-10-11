@@ -177,6 +177,43 @@ class MastersService:
                 return row
         return None
 
+    def get_routes_by_zone_and_day(
+        self, sede: str, zona: str, dia: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Returns every master row of `sede` with ZONA == `zona` (case-insensitive)
+        and DIA == `dia` (e.g. '1-LU'), excluding market routes (RUTA containing
+        'MERC'). Sorted by CODIGO RUTA ascending, numerically (non-numeric
+        codes go last). Rows without a seller are included.
+        """
+        target_zone = str(zona).strip().upper()
+        target_day = str(dia).strip()
+        rows = [
+            row for row in self.get_master_for_sede(sede)
+            if str(row.get("ZONA", "")).strip().upper() == target_zone
+            and str(row.get("DIA", "")).strip() == target_day
+            and "MERC" not in str(row.get("RUTA", "")).upper()
+        ]
+
+        def sort_key(row: Dict[str, Any]):
+            code = str(row.get("CODIGO RUTA", "")).strip()
+            return (0, int(code), "") if code.isdigit() else (1, 0, code)
+
+        return sorted(rows, key=sort_key)
+
+    def get_route_by_code(
+        self, sede: str, zona: str, dia: str, codigo_ruta: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Returns the route row whose CODIGO RUTA matches `codigo_ruta` within the
+        same set as get_routes_by_zone_and_day (zone, day, no 'MERC'), or None.
+        """
+        target = str(codigo_ruta).strip()
+        for row in self.get_routes_by_zone_and_day(sede, zona, dia):
+            if str(row.get("CODIGO RUTA", "")).strip() == target:
+                return row
+        return None
+
 # Backward‑compatible singleton and helper functions for test script
 _service = MastersService()
 

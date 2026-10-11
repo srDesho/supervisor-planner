@@ -82,7 +82,7 @@ def parse_waha_webhook(payload: Dict[str, Any]) -> Optional[ParsedWhatsAppMessag
 
 _CODE_ONLY_PATTERN = re.compile(r"^(\d{3,6})$")
 _VENTA_DIRECTA_PATTERN = re.compile(r"^venta\s+directa$")
-_VENTA_PATTERN = re.compile(r"^venta$")
+_RUTA_PATTERN = re.compile(r"^ruta$")
 _OFICINA_PATTERN = re.compile(r"\boficina\b")
 # Text is accent-free and lowercase when matched, so "sí" arrives as "si".
 #
@@ -112,15 +112,15 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
     Returns {"type": ..., "codigo_erp": str | None, "raw": text}.
 
     Evaluation order matters: "venta directa" (two words) is checked before
-    "venta" (one word).
+    "ruta" (one word).
     """
     raw = text or ""
     normalized = _normalize_command(raw)
 
     if _VENTA_DIRECTA_PATTERN.match(normalized):
         return {"type": "venta_directa", "codigo_erp": None, "raw": raw}
-    if _VENTA_PATTERN.match(normalized):
-        return {"type": "venta", "codigo_erp": None, "raw": raw}
+    if _RUTA_PATTERN.match(normalized):
+        return {"type": "ruta", "codigo_erp": None, "raw": raw}
     if _OFICINA_PATTERN.search(normalized):
         return {"type": "oficina", "codigo_erp": None, "raw": raw}
     code_match = _CODE_ONLY_PATTERN.match(normalized)
@@ -135,3 +135,25 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
     if _CANCEL_PATTERN.search(normalized) or _CANCEL_SHORT_PATTERN.match(normalized):
         return {"type": "cancel", "codigo_erp": None, "raw": raw}
     return {"type": "unknown", "codigo_erp": None, "raw": raw}
+
+
+_LISTA_PATTERN = re.compile(r"^lista(?:\s+(\d+))?$")
+_NUMBER_PATTERN = re.compile(r"^\d{1,6}$")
+
+
+def extract_ruta_input(text: str) -> Dict[str, Any]:
+    """
+    Classifies what a supervisor sends while the bot waits for the RUTA code
+    (AWAITING_RUTA_CODE). Returns one of:
+    {"type": "cancel"}, {"type": "lista", "page": int},
+    {"type": "number", "value": "<digits>"}, {"type": "invalid"}.
+    """
+    if extract_planning_intent(text)["type"] == "cancel":
+        return {"type": "cancel"}
+    normalized = _normalize_command(text)
+    lista = _LISTA_PATTERN.match(normalized)
+    if lista:
+        return {"type": "lista", "page": int(lista.group(1)) if lista.group(1) else 1}
+    if _NUMBER_PATTERN.match(normalized):
+        return {"type": "number", "value": normalized}
+    return {"type": "invalid"}

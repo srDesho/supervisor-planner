@@ -39,7 +39,7 @@ def _msg(body):
     return ParsedWhatsAppMessage(event="message", session="default", message_id="m1", from_phone="79999999", body=body)
 
 
-@pytest.mark.parametrize("body", ["hola", "4140", "CONFIRMAR", "AYUDA", "VENTA", "REGISTRO"])
+@pytest.mark.parametrize("body", ["hola", "4140", "CONFIRMAR", "AYUDA", "RUTA", "REGISTRO"])
 @pytest.mark.asyncio
 async def test_unauthorized_phone_is_totally_silent(fake_sheets, body):
     mock_wa = WhatsAppClient()

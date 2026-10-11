@@ -17,12 +17,18 @@ _WEEKDAY_NAMES_ES = {
 }
 
 
+def _seller_name(raw: Any) -> str:
+    """The seller's name, or '' when the master row has none (blank / 'N/A')."""
+    name = str(raw or "").strip()
+    return "" if name.upper() == "N/A" else name
+
+
 def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
     """
     Builds the standardized confirmation summary shown to the supervisor
     before writing to PLANIFICACION_DIARIA, adapted to the modality:
     - OFICINA / VENTA DIRECTA: minimal (no seller, route or zone to show).
-    - VENTA: modality line + name of the seller whose route is covered.
+    - RUTA: modality line + route + (optional) seller name, no ERP/zone.
     - ACOMPAÑAMIENTO: the full summary.
     """
     nombre_dia = _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()]
@@ -38,18 +44,27 @@ def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dic
             "✅ CONFIRMAR\n"
             "❌ CORREGIR"
         )
-    if modalidad == "VENTA":
-        # Vendedor_Apoyo is empty for VENTA (see _build_seller_plan), so no
-        # "Vendedor:" label; show only the name of the seller whose route is covered.
-        vendedor_line = (
-            "🛒 Modalidad: VENTA (cubres la ruta solo)\n"
-            f"👤 {plan.get('vendedor_nombre', 'N/A')}\n"
+    if modalidad == "RUTA":
+        # Vendedor_Apoyo is empty for RUTA (see _build_route_plan), so no
+        # "Vendedor:" label; show the route's seller name, if it has one.
+        seller = _seller_name(plan.get("vendedor_nombre"))
+        seller_line = f"👤 {seller}\n" if seller else ""
+        return (
+            "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
+            "🚗 Modalidad: RUTA (cubres la ruta solo)\n"
+            f"🗺️ Ruta: {plan.get('ruta_oficial', 'N/A')}\n"
+            f"{seller_line}"
+            f"🔑 Código ruta: {plan.get('codigo_ruta', 'N/A')}\n"
+            f"📆 Fecha: {fecha_trabajo.strftime('%d/%m/%Y')} ({nombre_dia} - {weekday_code})\n\n"
+            f"🏢 Sede: {plan.get('sede', 'N/A')}\n"
+            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}\n\n"
+            "¿Registrar?\n\n"
+            "✅ CONFIRMAR\n"
+            "❌ CORREGIR"
         )
-    else:
-        vendedor_line = f"👤 Vendedor: {plan.get('vendedor_apoyo', 'N/A')}\n"
     return (
         "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
-        f"{vendedor_line}"
+        f"👤 Vendedor: {plan.get('vendedor_apoyo', 'N/A')}\n"
         f"🆔 ERP: {plan.get('codigo_erp_vendedor', 'N/A')}\n"
         f"🗺️ Ruta: {plan.get('ruta_oficial', 'N/A')}\n"
         f"🧭 Zona: {plan.get('zona', 'N/A')}\n"
@@ -76,6 +91,43 @@ def build_selection_prompt(candidates: List[Dict[str, Any]]) -> str:
     for idx, route in enumerate(candidates, start=1):
         lines.append(f"{idx}. {route.get('RUTA', 'N/A')} (Zona {route.get('ZONA', 'N/A')})")
     lines.append("\nResponde con el número de la ruta, o *CANCELAR*.")
+    return "\n".join(lines)
+
+
+ROUTE_LIST_PAGE_SIZE = 25
+
+
+def route_list_pages(total: int, page_size: int = ROUTE_LIST_PAGE_SIZE) -> int:
+    """Number of pages needed to show `total` routes."""
+    return max(1, -(-total // page_size))
+
+
+def build_route_list(
+    fecha_trabajo: date,
+    routes: List[Dict[str, Any]],
+    page: int = 1,
+    page_size: int = ROUTE_LIST_PAGE_SIZE
+) -> str:
+    """
+    Builds the RUTA list: one line per route, `<Nº>. <RUTA> · <VENDEDOR> · <CODIGO RUTA>`.
+    Numbers are global (page 2 continues after page 1) so the supervisor always
+    answers with the number shown. The seller is printed as the master has it
+    (e.g. 'VENDEDOR 10'); '(sin vendedor)' only replaces an empty cell.
+    Zone and ERP code are intentionally not shown. Paginated only if there are
+    more than `page_size` routes.
+    """
+    nombre_dia = _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()].upper()
+    pages = route_list_pages(len(routes), page_size)
+    start = (page - 1) * page_size
+    lines = [f"📋 *RUTAS DISPONIBLES — {nombre_dia} {fecha_trabajo.strftime('%d/%m/%Y')}*\n"]
+    for idx, route in enumerate(routes[start:start + page_size], start=start + 1):
+        # The seller is shown exactly as the master has it; only an empty cell falls back.
+        seller = str(route.get("VENDEDOR") or "").strip() or "(sin vendedor)"
+        lines.append(f"{idx}. {route.get('RUTA', 'N/A')} · {seller} · {route.get('CODIGO RUTA', 'N/A')}")
+    lines.append("\nEnvía el *NÚMERO* de la ruta que vas a cubrir (ej. 3).")
+    if pages > 1:
+        lines.append(f"Página {page} de {pages}. Envía *LISTA {page % pages + 1}* para ver más.")
+    lines.append("O envía *CANCELAR* para salir.")
     return "\n".join(lines)
 
 

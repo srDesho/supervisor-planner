@@ -3,7 +3,7 @@ Core planning orchestrator service.
 
 Flow (see PARTE 6 of the spec): resolve sender phone -> authenticate ->
 AYUDA -> conversational state (AWAITING_CONFIRMATION / AWAITING_SELECTION /
-AWAITING_VENTA_CODE) -> new planning (seller code, VENTA, VENTA DIRECTA,
+AWAITING_RUTA_CODE) -> new planning (seller code, RUTA, VENTA DIRECTA,
 OFICINA). Incoming messages are attended at any day/hour; the schedule only
 governs the proactive reminders (see reminder_service).
 
@@ -20,9 +20,11 @@ from app.business.dates import calculate_work_date, get_weekday_code, get_curren
 from app.business.planning_rules import (
     build_confirmation_summary,
     build_confirmation_summary_update,
-    build_selection_prompt
+    build_selection_prompt,
+    build_route_list,
+    route_list_pages
 )
-from app.whatsapp.parser import ParsedWhatsAppMessage, extract_planning_intent
+from app.whatsapp.parser import ParsedWhatsAppMessage, extract_planning_intent, extract_ruta_input
 from app.whatsapp.lid_resolver import resolve_to_phone
 from app.whatsapp.templates import (
     MSG_HELP,
@@ -38,8 +40,12 @@ from app.whatsapp.templates import (
     MSG_CANCELLED_NO_CHANGES,
     MSG_SELECTION_INVALID,
     MSG_SELECTION_TOO_MANY_ERRORS,
-    MSG_VENTA_ASK_CODE,
-    MSG_VENTA_CODE_INVALID
+    MSG_RUTA_ASK_CODE,
+    MSG_RUTA_CODE_INVALID,
+    MSG_RUTA_CODE_NOT_FOUND,
+    MSG_RUTA_LIST_OUT_OF_RANGE,
+    MSG_RUTA_LIST_EMPTY,
+    MSG_RUTA_LIST_BAD_PAGE
 )
 from app.whatsapp.client import WhatsAppClient
 from app.sheets.masters import MastersService
@@ -51,7 +57,7 @@ from app.services.audit_service import AuditService
 MAX_SELECTION_ATTEMPTS = 3
 
 MODALIDAD_ACOMPANAMIENTO = "ACOMPAÑAMIENTO"
-MODALIDAD_VENTA = "VENTA"
+MODALIDAD_RUTA = "RUTA"
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +145,14 @@ class PlanningService:
             await self._handle_awaiting_selection(text, entry, supervisor, phone, chat_id)
             return
 
-        if step == "AWAITING_VENTA_CODE":
-            await self._handle_awaiting_venta_code(text, supervisor, phone, chat_id, message_id, now)
+        if step == "AWAITING_RUTA_CODE":
+            await self._handle_awaiting_ruta_code(text, entry, supervisor, phone, chat_id, message_id, now)
             return
 
         # 5. New planning.
         await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
 
-    # --- New planning (code_only / venta / venta_directa / oficina) ---
+    # --- New planning (code_only / ruta / venta_directa / oficina) ---
 
     async def _handle_new_planning(
         self,
@@ -170,10 +176,10 @@ class PlanningService:
             )
             return
 
-        if intent["type"] == "venta":
-            # Ask which seller's route will be covered; the code arrives next.
-            self.conversation_svc.set(phone, "AWAITING_VENTA_CODE")
-            await self.whatsapp_client.send_message(chat_id, MSG_VENTA_ASK_CODE)
+        if intent["type"] == "ruta":
+            # Ask which route will be covered (seller code, route code or LISTA).
+            self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={"list_shown": False})
+            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_ASK_CODE)
             return
 
         if intent["type"] == "venta_directa":
@@ -216,8 +222,8 @@ class PlanningService:
         now: datetime
     ) -> None:
         """
-        Seller-code planning shared by ACOMPAÑAMIENTO (code alone) and VENTA
-        (code sent after 'venta'): zone check, today's route(s), duplicate
+        Seller-code planning shared by ACOMPAÑAMIENTO (code alone) and RUTA
+        (seller code sent while in AWAITING_RUTA_CODE): zone check, today's route(s), duplicate
         check, then a confirmation proposal (or route selection if several).
         Only the modalidad differs between the two.
         """
@@ -289,7 +295,7 @@ class PlanningService:
         )
         if duplicate is not None:
             otro_supervisor = duplicate.get("Supervisor", "")
-            # VENTA rows have an empty Vendedor_Apoyo -> use the master's name.
+            # RUTA rows have an empty Vendedor_Apoyo -> use the master's name.
             vendedor_nombre = duplicate.get("Vendedor_Apoyo") or seller_row.get("VENDEDOR", "")
             msg = MSG_SELLER_ALREADY_ASSIGNED.format(
                 vendedor=vendedor_nombre,
@@ -341,7 +347,7 @@ class PlanningService:
     ) -> Dict[str, Any]:
         """
         Plan for a seller-code planning. ACOMPAÑAMIENTO records the seller as
-        Vendedor_Apoyo; VENTA (supervisor covers the route alone) records an
+        Vendedor_Apoyo; RUTA (supervisor covers the route alone) records an
         empty string there and keeps the seller's name in `vendedor_nombre`,
         which is only used for the confirmation summary and never written to
         the Sheet.
@@ -349,19 +355,43 @@ class PlanningService:
         seller_name = seller_row.get("VENDEDOR", "")
         plan = self._build_plan_dict(
             modalidad=modalidad,
-            # TEMPORARY: VENTA stores "" in Vendedor_Apoyo (the supervisor goes
+            # TEMPORARY: RUTA stores "" in Vendedor_Apoyo (the supervisor goes
             # alone, there is no supporting seller), while OFICINA and
             # VENTA DIRECTA still store "N/A". The inconsistency is deliberate
             # for now; unify the "no value" convention in a future refactor.
-            vendedor_apoyo="" if modalidad == MODALIDAD_VENTA else seller_name,
+            vendedor_apoyo="" if modalidad == MODALIDAD_RUTA else seller_name,
             codigo_erp_vendedor=codigo_erp,
             route_row=route_row,
             fecha_trabajo=fecha_trabajo,
             sede=sede,
             supervisor=supervisor
         )
-        if modalidad == MODALIDAD_VENTA:
+        if modalidad == MODALIDAD_RUTA:
             plan["vendedor_nombre"] = seller_name
+        return plan
+
+    def _build_route_plan(
+        self,
+        route_row: Dict[str, Any],
+        fecha_trabajo: str,
+        sede: str,
+        supervisor: str
+    ) -> Dict[str, Any]:
+        """
+        RUTA plan for a route picked directly (from LISTA or by route code):
+        no seller ERP code ('N/A'), empty Vendedor_Apoyo. The route's seller
+        name, if any, is kept in `vendedor_nombre` for the summary only.
+        """
+        plan = self._build_plan_dict(
+            modalidad=MODALIDAD_RUTA,
+            vendedor_apoyo="",
+            codigo_erp_vendedor="N/A",
+            route_row=route_row,
+            fecha_trabajo=fecha_trabajo,
+            sede=sede,
+            supervisor=supervisor
+        )
+        plan["vendedor_nombre"] = str(route_row.get("VENDEDOR", "") or "").strip()
         return plan
 
     def _build_plan_dict(
@@ -474,7 +504,7 @@ class PlanningService:
             await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
             return
 
-        if intent["type"] in ("code_only", "venta", "venta_directa", "oficina"):
+        if intent["type"] in ("code_only", "ruta", "venta_directa", "oficina"):
             # A fresh planning submission overwrites the pending draft.
             await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
             return
@@ -531,31 +561,161 @@ class PlanningService:
         )
         await self._propose_for_confirmation(plan, chat_id, phone, fecha_trabajo_date, weekday_code, sede, supervisor_name)
 
-    # --- AWAITING_VENTA_CODE ---
+    # --- AWAITING_RUTA_CODE ---
 
-    async def _handle_awaiting_venta_code(
+    async def _handle_awaiting_ruta_code(
         self,
         text: str,
+        entry: Dict[str, Any],
         supervisor: Dict[str, Any],
         phone: str,
         chat_id: str,
         message_id: str,
         now: datetime
     ) -> None:
-        intent = extract_planning_intent(text)
+        """
+        While waiting for the RUTA code the supervisor may send: a seller code,
+        a route code, LISTA [page], a list number (once the list was shown),
+        or CANCELAR. Rejections keep the state so another attempt is possible.
+        """
+        payload = entry["payload"]
+        ruta_input = extract_ruta_input(text)
 
-        if intent["type"] == "cancel":
+        if ruta_input["type"] == "cancel":
             self.conversation_svc.clear(phone)
             await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
             return
 
-        if intent["type"] != "code_only":
-            await self.whatsapp_client.send_message(chat_id, MSG_VENTA_CODE_INVALID)
+        if ruta_input["type"] == "lista":
+            await self._show_route_list(ruta_input["page"], supervisor, phone, chat_id, now)
             return
 
-        # Same validations as a plain seller code; a rejection leaves the
-        # state in AWAITING_VENTA_CODE so the supervisor can retry another code.
-        await self._handle_seller_code(
-            intent["codigo_erp"], MODALIDAD_VENTA,
-            supervisor, phone, chat_id, message_id, now
+        if ruta_input["type"] != "number":
+            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_CODE_INVALID)
+            return
+
+        value = ruta_input["value"]
+        routes = payload.get("routes") or []
+        if payload.get("list_shown") and routes:
+            # With the list on screen, a short number is a position in it.
+            # Codes have 3+ digits, so a 1-2 digit number out of range is a typo.
+            position = int(value)
+            if 1 <= position <= len(routes):
+                fecha_trabajo_str = payload["fecha_trabajo"]
+                fecha_trabajo_date = datetime.strptime(fecha_trabajo_str, "%Y-%m-%d").date()
+                await self._propose_route(
+                    routes[position - 1], fecha_trabajo_date, supervisor, phone, chat_id
+                )
+                return
+            if len(value) < 3:
+                await self.whatsapp_client.send_message(
+                    chat_id, MSG_RUTA_LIST_OUT_OF_RANGE.format(total=len(routes))
+                )
+                return
+
+        await self._handle_ruta_code(value, supervisor, phone, chat_id, message_id, now)
+
+    async def _handle_ruta_code(
+        self,
+        code: str,
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        message_id: str,
+        now: datetime
+    ) -> None:
+        """
+        A number sent in AWAITING_RUTA_CODE: seller code first (same flow and
+        validations as a plain seller code, but modalidad RUTA); if no seller
+        in the supervisor's zone has it, a route code of the supervisor's
+        zone and day.
+        """
+        sede = supervisor["Sede"]
+        zona = str(supervisor.get("Zona") or "").strip()
+        if not zona:
+            # _handle_seller_code answers with the "no zone assigned" message.
+            await self._handle_seller_code(
+                code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
+            )
+            return
+
+        if self.masters_service.get_seller_by_code_and_zone(sede, code, zona):
+            await self._handle_seller_code(
+                code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
+            )
+            return
+
+        fecha_trabajo = calculate_work_date(now)
+        route_row = self.masters_service.get_route_by_code(
+            sede, zona, get_weekday_code(fecha_trabajo), code
+        )
+        if route_row:
+            await self._propose_route(route_row, fecha_trabajo, supervisor, phone, chat_id)
+            return
+
+        if self.masters_service.get_seller_by_code(sede, code):
+            # The seller exists but in another zone: same "wrong zone" answer as always.
+            await self._handle_seller_code(
+                code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
+            )
+            return
+
+        await self.whatsapp_client.send_message(chat_id, MSG_RUTA_CODE_NOT_FOUND)
+
+    async def _show_route_list(
+        self,
+        page: int,
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        now: datetime
+    ) -> None:
+        """Sends one page of the day's routes for the supervisor's zone and keeps AWAITING_RUTA_CODE."""
+        zona = str(supervisor.get("Zona") or "").strip()
+        if not zona:
+            await self.whatsapp_client.send_message(chat_id, MSG_SUPERVISOR_NO_ZONE)
+            return
+
+        fecha_trabajo = calculate_work_date(now)
+        weekday_code = get_weekday_code(fecha_trabajo)
+        routes = self.masters_service.get_routes_by_zone_and_day(supervisor["Sede"], zona, weekday_code)
+        if not routes:
+            await self.whatsapp_client.send_message(
+                chat_id,
+                MSG_RUTA_LIST_EMPTY.format(dia=f"{fecha_trabajo.strftime('%d/%m/%Y')} ({weekday_code})")
+            )
+            return
+
+        pages = route_list_pages(len(routes))
+        if not 1 <= page <= pages:
+            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_LIST_BAD_PAGE.format(pages=pages))
+            return
+
+        self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={
+            "list_shown": True,
+            "routes": routes,
+            "fecha_trabajo": fecha_trabajo.strftime("%Y-%m-%d")
+        })
+        await self.whatsapp_client.send_message(chat_id, build_route_list(fecha_trabajo, routes, page))
+
+    async def _propose_route(
+        self,
+        route_row: Dict[str, Any],
+        fecha_trabajo,
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str
+    ) -> None:
+        # 1 supervisor per zone per sede -> no duplicate check between
+        # supervisors is needed in the RUTA flow when a route is picked directly
+        # (LISTA or route code). The zone validation already restricts the
+        # routes a supervisor can see. (Picking by seller code keeps the
+        # seller duplicate check in _handle_seller_code.)
+        sede = supervisor["Sede"]
+        supervisor_name = supervisor["Nombre"]
+        plan = self._build_route_plan(
+            route_row, fecha_trabajo.strftime("%Y-%m-%d"), sede, supervisor_name
+        )
+        await self._propose_for_confirmation(
+            plan, chat_id, phone, fecha_trabajo, get_weekday_code(fecha_trabajo), sede, supervisor_name
         )

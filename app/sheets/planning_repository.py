@@ -16,6 +16,15 @@ from .client import GoogleSheetsClient, GoogleSheetsError
 
 logger = logging.getLogger(__name__)
 
+# Flag row created by the escalation cycle for a supervisor who did not plan
+# in time. It is NOT a real planning: see is_real_planning().
+ESCALATED_STATE = "PENDIENTE_ESCALADO"
+
+
+def is_real_planning(row: Optional[Dict[str, Any]]) -> bool:
+    """True if `row` (from find_active) is an actual planning, not an escalation flag."""
+    return row is not None and row.get("Estado") != ESCALATED_STATE
+
 # Column order as defined in SPEC.md §30
 _COLUMNS = [
     "ID_Registro",
@@ -131,8 +140,17 @@ class GoogleSheetsPlanningRepository:
         if active:
             row_index = active["__row_index"]
             payload["ID_Registro"] = active.get("ID_Registro")
-            payload["Es_Cambio"] = "TRUE"
-            payload.setdefault("Estado", "MODIFICADO")
+            if active.get("Estado") == ESCALATED_STATE:
+                # First real planning after being escalated: reuse the flag
+                # row, but it is a registration, not a change.
+                now = datetime.now()
+                payload["Es_Cambio"] = "FALSE"
+                payload["Estado"] = "REGISTRADO"
+                payload["Fecha_Registro"] = now.strftime("%d/%m/%Y")
+                payload["Hora_Registro"] = now.strftime("%H:%M:%S")
+            else:
+                payload["Es_Cambio"] = "TRUE"
+                payload.setdefault("Estado", "MODIFICADO")
             current_records = self.client.get_all_records(self.worksheet_name)
             current_row = current_records[row_index - 2]
             merged = {**current_row, **payload}
@@ -169,20 +187,16 @@ class GoogleSheetsPlanningRepository:
 
     def mark_escalated(self, fecha_trabajo: str, sede: str, supervisor: str) -> Dict[str, Any]:
         """
-        Marks the active row for this key as PENDIENTE_ESCALADO, or creates
-        one (with N/A fields) if the supervisor never sent a planning at all.
+        Creates the PENDIENTE_ESCALADO flag row (with N/A fields) for this
+        key, once. Idempotent: if ANY active row already exists for the key
+        (a real planning, or a previous escalation) nothing is written and
+        that row is returned. The result carries ``__created`` so callers
+        know whether this call actually escalated the supervisor.
         """
         active = self.find_active(fecha_trabajo, sede, supervisor)
         if active:
-            row_index = active["__row_index"]
-            current_records = self.client.get_all_records(self.worksheet_name)
-            current_row = current_records[row_index - 2]
-            merged = {**current_row, "Estado": "PENDIENTE_ESCALADO"}
-            values = [merged.get(col, "") for col in _COLUMNS]
-            self.client.update_row(self.worksheet_name, row_index, values)
-            logger.info(f"Escalated planning row {merged.get('ID_Registro')} at index {row_index} in {self.worksheet_name}.")
-            merged["__row_index"] = row_index
-            return merged
+            active["__created"] = False
+            return active
 
         payload = {
             "Fecha_Trabajo": fecha_trabajo,
@@ -195,10 +209,12 @@ class GoogleSheetsPlanningRepository:
             "Zona": "N/A",
             "Codigo_Ruta": "N/A",
             "DIA": "N/A",
-            "Estado": "PENDIENTE_ESCALADO",
+            "Estado": ESCALATED_STATE,
             "Es_Cambio": "FALSE"
         }
         values = self._row_to_values(payload)
         self.client.append_row(self.worksheet_name, values)
         logger.info(f"Created PENDIENTE_ESCALADO row for {sede}/{supervisor}/{fecha_trabajo} in {self.worksheet_name}.")
-        return dict(zip(_COLUMNS, values))
+        created = dict(zip(_COLUMNS, values))
+        created["__created"] = True
+        return created

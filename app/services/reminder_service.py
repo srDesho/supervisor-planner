@@ -1,16 +1,27 @@
 """
 Reminder and escalation service — entirely over Google Sheets, no local database.
 
-Schedule (see PARTE 7 / K / L / M of the spec):
-- Monday-Friday, within [PLANNING_WINDOW_START, PLANNING_WINDOW_END]: a
-  reminder every REMINDER_INTERVAL_MINUTES to whoever hasn't registered yet.
-  At REMINDER_ESCALATION_TIME (window close), escalate instead: mark
-  PENDIENTE_ESCALADO in PLANIFICACION_DIARIA and alert ADMIN_PHONE.
-- Saturday, at SATURDAY_NOTICE_TIME: a single informational notice to
-  whoever hasn't registered for the upcoming Monday, plus the same
-  escalation treatment (mark + admin alert) per decision L — never repeated
-  the same day.
-- Sunday: nothing at all.
+Schedule per day (America/La_Paz; every time is a setting, see app/config.py).
+The machine running the bot is on from Monday ~08:00 until Saturday 12:00:
+- Monday AM  [MONDAY_AM_WINDOW_START, MONDAY_AM_ESCALATION_TIME): reminders
+  for TODAY (catch-up: nobody planned over the weekend). From the AM
+  escalation time until the PM window opens: escalation for TODAY.
+- Monday PM  [MONDAY_PM_WINDOW_START, MONDAY_PM_ESCALATION_TIME): reminders
+  for TOMORROW. From the PM escalation time on: escalation for TOMORROW.
+- Tuesday-Friday [WEEKDAY_PM_WINDOW_START, WEEKDAY_PM_ESCALATION_TIME):
+  reminders for the NEXT work day (Friday -> Saturday). From the escalation
+  time on: escalation for that day.
+- Saturday [SATURDAY_AM_WINDOW_START, SATURDAY_AM_LAST_REMINDER]: reminders
+  for TODAY. The tick at SATURDAY_AM_LAST_REMINDER ignores the cooldown so
+  the last reminder really goes out then. No escalation on Saturday: the
+  Monday AM catch-up covers it.
+- Sunday: nothing.
+
+The target date always comes from calculate_work_date(now). A supervisor is
+reminded at most once per REMINDER_COOLDOWN_MINUTES (except the Saturday last
+reminder). Escalation (flag the supervisor PENDIENTE_ESCALADO in
+PLANIFICACION_DIARIA + alert ADMIN_PHONE) happens once per supervisor/day:
+later ticks find the flag row and do nothing.
 """
 import logging
 from datetime import datetime, time
@@ -19,7 +30,7 @@ from typing import Any, Dict, List, Optional
 from app.config import get_settings
 from app.business.dates import calculate_work_date, get_weekday_code, get_current_bolivia_datetime
 from app.utils.phone import normalize_phone
-from app.sheets.planning_repository import GoogleSheetsPlanningRepository
+from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
 from app.sheets.supervisors_repository import SupervisorsRepository
 from app.services.supervisor_service import SupervisorService
 from app.services.conversation_service import ConversationService
@@ -28,11 +39,15 @@ from app.whatsapp.templates import (
     MSG_REMINDER_PENDING_SUBMISSION,
     MSG_REMINDER_AWAITING_CONFIRMATION,
     MSG_REMINDER_AWAITING_SELECTION,
-    MSG_REMINDER_SATURDAY_NOTICE,
     build_escalation_alert
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_hhmm(value: str) -> time:
+    hour, minute = map(int, value.split(":"))
+    return time(hour, minute)
 
 
 class ReminderService:
@@ -54,34 +69,45 @@ class ReminderService:
         now = eval_time or get_current_bolivia_datetime()
         logger.info(f"Reminder cycle tick at {now.isoformat()} (weekday={now.weekday()})")
         weekday = now.weekday()
+        # Compare at minute resolution: a tick at 11:30:00.4 is the 11:30 tick.
+        t = time(now.hour, now.minute)
+        s = self.settings
 
         if weekday == 6:
-            logger.debug("Reminder cycle skipped: Sunday is not a work day.")
+            logger.debug("Reminder cycle skipped: Sunday, the bot is not expected to be running.")
             return
 
         if weekday == 5:
-            notice_hour, notice_minute = map(int, self.settings.SATURDAY_NOTICE_TIME.split(":"))
-            notice_time = time(notice_hour, notice_minute)
-            if now.time() >= notice_time:
-                await self._run_saturday_notice(now)
+            sat_start = _parse_hhmm(s.SATURDAY_AM_WINDOW_START)
+            sat_last = _parse_hhmm(s.SATURDAY_AM_LAST_REMINDER)
+            if sat_start <= t <= sat_last:
+                await self._run_normal_reminders(now, ignore_cooldown=(t == sat_last))
             return
 
-        start_hour, start_minute = map(int, self.settings.PLANNING_WINDOW_START.split(":"))
-        end_hour, end_minute = map(int, self.settings.PLANNING_WINDOW_END.split(":"))
-        window_start = time(start_hour, start_minute)
-        window_end = time(end_hour, end_minute)
-        if not (window_start <= now.time() <= window_end):
+        if weekday == 0:
+            am_start = _parse_hhmm(s.MONDAY_AM_WINDOW_START)
+            am_escalation = _parse_hhmm(s.MONDAY_AM_ESCALATION_TIME)
+            pm_start = _parse_hhmm(s.MONDAY_PM_WINDOW_START)
+            pm_escalation = _parse_hhmm(s.MONDAY_PM_ESCALATION_TIME)
+            if am_start <= t < am_escalation:
+                await self._run_normal_reminders(now)
+            elif am_escalation <= t < pm_start:
+                await self._run_escalation(now)
+            elif pm_start <= t < pm_escalation:
+                await self._run_normal_reminders(now)
+            elif t >= pm_escalation:
+                await self._run_escalation(now)
             return
 
-        escalation_hour, escalation_minute = map(int, self.settings.REMINDER_ESCALATION_TIME.split(":"))
-        escalation_time = time(escalation_hour, escalation_minute)
-        if now.time() >= escalation_time:
+        # Tuesday-Friday
+        pm_start = _parse_hhmm(s.WEEKDAY_PM_WINDOW_START)
+        pm_escalation = _parse_hhmm(s.WEEKDAY_PM_ESCALATION_TIME)
+        if pm_start <= t < pm_escalation:
+            await self._run_normal_reminders(now)
+        elif t >= pm_escalation:
             await self._run_escalation(now)
-            return
 
-        await self._run_normal_reminders(now)
-
-    async def _run_normal_reminders(self, now: datetime) -> None:
+    async def _run_normal_reminders(self, now: datetime, ignore_cooldown: bool = False) -> None:
         fecha_trabajo = calculate_work_date(now)
         fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
         dia_trabajo = get_weekday_code(fecha_trabajo)
@@ -96,7 +122,7 @@ class ReminderService:
                 if self._has_active_planning(fecha_trabajo_str, supervisor):
                     skipped_registered += 1
                     continue
-                if self._within_cooldown(supervisor, now):
+                if not ignore_cooldown and self._within_cooldown(supervisor, now):
                     skipped_cooldown += 1
                     continue
 
@@ -120,7 +146,7 @@ class ReminderService:
                 continue
 
         logger.info(
-            f"Normal reminders done: {sent} sent, {failed} failed, "
+            f"Normal reminders for {fecha_trabajo_str} done: {sent} sent, {failed} failed, "
             f"{skipped_registered} already registered, {skipped_cooldown} within cooldown."
         )
 
@@ -136,31 +162,43 @@ class ReminderService:
         )
 
     def _has_active_planning(self, fecha_trabajo_str: str, supervisor: Dict[str, Any]) -> bool:
+        """
+        True if the supervisor has a REAL planning for the date. A
+        PENDIENTE_ESCALADO flag row means "did not plan in time", so it does
+        not count: such a supervisor is still reminded.
+        """
         row = self.sheets_repo.find_active(
             fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")
         )
-        return row is not None and row.get("Estado") != "CANCELADO"
+        return is_real_planning(row)
 
     def _within_cooldown(self, supervisor: Dict[str, Any], now: datetime) -> bool:
         last = self._parse_timestamp(supervisor.get("Ultimo_Recordatorio"))
         if not last:
             return False
-        interval_seconds = self.settings.REMINDER_INTERVAL_MINUTES * 60
-        return (now.replace(tzinfo=None) - last).total_seconds() < interval_seconds
+        cooldown_seconds = self.settings.REMINDER_COOLDOWN_MINUTES * 60
+        return (now.replace(tzinfo=None) - last).total_seconds() < cooldown_seconds
 
     async def _run_escalation(self, now: datetime) -> None:
+        """
+        Flags every supervisor without a planning for the target date as
+        PENDIENTE_ESCALADO and alerts the admin about them. Idempotent:
+        mark_escalated() writes nothing if a row (real planning or an earlier
+        escalation) already exists, and only newly escalated supervisors go
+        into the alert, so repeated ticks create neither duplicate rows nor
+        duplicate alerts.
+        """
         fecha_trabajo = calculate_work_date(now)
         fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
         pendientes: List[Dict[str, Any]] = []
 
         for supervisor in self.supervisor_svc.get_all_active():
             try:
-                if self._has_active_planning(fecha_trabajo_str, supervisor):
-                    continue
-                self.sheets_repo.mark_escalated(
+                result = self.sheets_repo.mark_escalated(
                     fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")
                 )
-                pendientes.append(supervisor)
+                if result.get("__created"):
+                    pendientes.append(supervisor)
             except Exception as exc:
                 logger.error(
                     f"Failed to escalate {supervisor.get('Nombre')}: {exc}",
@@ -171,48 +209,6 @@ class ReminderService:
         if pendientes:
             await self._send_escalation_alert(fecha_trabajo.strftime("%d/%m/%Y"), pendientes)
             logger.warning(f"Dispatched escalation alert to admin for {len(pendientes)} supervisors.")
-
-    async def _run_saturday_notice(self, now: datetime) -> None:
-        """
-        Single Saturday event: sends the informational notice AND applies
-        the same escalation treatment (PENDIENTE_ESCALADO + admin alert) as
-        Mon-Fri, per decision L ("Opción A"). Deduplicated per calendar day
-        via Ultimo_Recordatorio's date, so later ticks the same Saturday
-        don't repeat it.
-        """
-        fecha_trabajo = calculate_work_date(now)
-        fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
-        pendientes: List[Dict[str, Any]] = []
-
-        for supervisor in self.supervisor_svc.get_all_active():
-            try:
-                if self._has_active_planning(fecha_trabajo_str, supervisor):
-                    continue
-
-                last = self._parse_timestamp(supervisor.get("Ultimo_Recordatorio"))
-                if last and last.date() == now.date():
-                    continue
-
-                phone = str(supervisor.get("Telefono", "") or "")
-
-                await self.whatsapp_client.send_message(phone, MSG_REMINDER_SATURDAY_NOTICE)
-                self.supervisors_repo.update_last_reminder(phone, now.strftime("%Y-%m-%d %H:%M:%S"))
-                logger.info(f"Dispatched Saturday notice to {supervisor.get('Nombre')} ({phone}).")
-
-                self.sheets_repo.mark_escalated(
-                    fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")
-                )
-                pendientes.append(supervisor)
-            except Exception as exc:
-                logger.error(
-                    f"Failed to send Saturday notice to {supervisor.get('Nombre')}: {exc}",
-                    exc_info=True,
-                )
-                continue
-
-        if pendientes:
-            await self._send_escalation_alert(fecha_trabajo.strftime("%d/%m/%Y"), pendientes)
-            logger.warning(f"Dispatched Saturday escalation alert to admin for {len(pendientes)} supervisors.")
 
     async def _send_escalation_alert(self, fecha_trabajo_display: str, pendientes: List[Dict[str, Any]]) -> None:
         msg = build_escalation_alert(

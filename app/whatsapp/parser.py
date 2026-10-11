@@ -84,9 +84,20 @@ _CODE_ONLY_PATTERN = re.compile(r"^(\d{3,6})$")
 _VENTA_DIRECTA_PATTERN = re.compile(r"^venta\s+directa$")
 _VENTA_PATTERN = re.compile(r"^venta$")
 _OFICINA_PATTERN = re.compile(r"\boficina\b")
-_CONFIRM_PATTERN = re.compile(r"\bconfirmar\b")
-_CORRECT_PATTERN = re.compile(r"\bcorregir\b")
-_CANCEL_PATTERN = re.compile(r"\bcancelar\b")
+# Text is accent-free and lowercase when matched, so "sí" arrives as "si".
+#
+# Long, unambiguous command words match as a whole word ANYWHERE in the
+# message. "confir+mar" also tolerates the typo "confirrmar".
+_CONFIRM_PATTERN = re.compile(r"\b(?:confir+mar|confirma|confirmo)\b")
+_CORRECT_PATTERN = re.compile(
+    r"\b(?:corregir|corrige|corrijo|cambiar|cambia|editar|edito)\b"
+)
+_CANCEL_PATTERN = re.compile(r"\b(?:cancelar|cancela|cancelo|descartar)\b")
+# Short words collide with everyday sentences ("no tengo ruta", "ok gracias"),
+# so they only count when they ARE the whole message (optionally followed by
+# a single '.' or '!').
+_CONFIRM_SHORT_PATTERN = re.compile(r"^(?:ok|okey|dale|listo|si)\s*[.!]?$")
+_CANCEL_SHORT_PATTERN = re.compile(r"^(?:no|nop|salir|salgo)\s*[.!]?$")
 _HELP_PATTERN = re.compile(r"\bayuda\b|\bhelp\b")
 
 
@@ -117,10 +128,10 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
         return {"type": "code_only", "codigo_erp": code_match.group(1), "raw": raw}
     if _HELP_PATTERN.search(normalized):
         return {"type": "help", "codigo_erp": None, "raw": raw}
-    if _CONFIRM_PATTERN.search(normalized):
+    if _CONFIRM_PATTERN.search(normalized) or _CONFIRM_SHORT_PATTERN.match(normalized):
         return {"type": "confirm", "codigo_erp": None, "raw": raw}
     if _CORRECT_PATTERN.search(normalized):
         return {"type": "correct", "codigo_erp": None, "raw": raw}
-    if _CANCEL_PATTERN.search(normalized):
+    if _CANCEL_PATTERN.search(normalized) or _CANCEL_SHORT_PATTERN.match(normalized):
         return {"type": "cancel", "codigo_erp": None, "raw": raw}
     return {"type": "unknown", "codigo_erp": None, "raw": raw}

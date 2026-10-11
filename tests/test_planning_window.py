@@ -1,5 +1,5 @@
 """
-Unit tests for the planning window / day-of-week gate (Part 10.9).
+Incoming messages are attended at ANY day/hour; only proactive reminders follow the schedule.
 """
 import pytest
 from datetime import datetime
@@ -17,6 +17,8 @@ from app.services.conversation_service import ConversationService, _STORE
 
 OUTSIDE_WINDOW_DT = datetime(2026, 9, 16, 10, 0, tzinfo=BOLIVIA_TZ)  # Miércoles 10:00 (antes de 15:00)
 SATURDAY_DT = datetime(2026, 9, 19, 11, 0, tzinfo=BOLIVIA_TZ)        # Sábado 11:00
+SATURDAY_PM_DT = datetime(2026, 9, 19, 16, 0, tzinfo=BOLIVIA_TZ)     # Sábado 16:00
+SUNDAY_DT = datetime(2026, 9, 20, 10, 0, tzinfo=BOLIVIA_TZ)          # Domingo 10:00
 
 SUPERVISORS = [
     {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
@@ -42,17 +44,23 @@ def _msg(body, message_id="m1"):
 
 
 @pytest.mark.asyncio
-async def test_outside_window_weekday_is_ignored(fake_sheets):
+@pytest.mark.parametrize("when,expected_date", [
+    (OUTSIDE_WINDOW_DT, "17/09/2026"),  # Miércoles 10:00 -> Jueves
+    (SATURDAY_DT, "19/09/2026"),        # Sábado 11:00 -> Sábado
+    (SATURDAY_PM_DT, "21/09/2026"),     # Sábado 16:00 -> Lunes
+    (SUNDAY_DT, "21/09/2026"),          # Domingo -> Lunes
+])
+async def test_messages_are_attended_at_any_day_and_hour(fake_sheets, when, expected_date):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    await svc.handle_message(_msg("1691"), eval_datetime=OUTSIDE_WINDOW_DT)
+    await svc.handle_message(_msg("oficina"), eval_datetime=when)
 
-    assert len(mock_wa.sent_messages) == 0
+    assert len(mock_wa.sent_messages) == 1
+    assert "CONFIRMA TU PLANIFICACIÓN" in mock_wa.sent_messages[0]["text"]
+    assert expected_date in mock_wa.sent_messages[0]["text"]
     records = fake_sheets.get_all_records("LOG_BOT")
-    outside = [r for r in records if r.get("accion") == "OUTSIDE_WINDOW"]
-    assert len(outside) == 1
-    assert outside[0]["resultado"] == "IGNORED"
+    assert not [r for r in records if r.get("accion") == "OUTSIDE_WINDOW"]
 
 
 @pytest.mark.asyncio
@@ -73,13 +81,3 @@ async def test_pending_confirmation_bypasses_window(fake_sheets):
 
     records = fake_sheets.get_all_records("PLANIFICACION_DIARIA")
     assert len(records) == 1
-
-
-@pytest.mark.asyncio
-async def test_saturday_is_ignored_even_with_valid_code(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-
-    await svc.handle_message(_msg("1691"), eval_datetime=SATURDAY_DT)
-
-    assert len(mock_wa.sent_messages) == 0

@@ -86,7 +86,27 @@ def _msg(body, phone="70000001", message_id="m1"):
     ("CONFIRMAR", "confirm"),
     ("corregir", "correct"),
     ("CANCELAR", "cancel"),
+    ("ConfirMar", "confirm"),
+    ("Confirrmar", "confirm"),
+    ("confirma", "confirm"),
+    ("Dale", "confirm"),
+    ("Listo", "confirm"),
+    ("Ok", "confirm"),
+    ("okey", "confirm"),
+    ("Sí", "confirm"),
+    ("si", "confirm"),
+    ("Cambiar", "correct"),
+    ("cambia", "correct"),
+    ("Editar", "correct"),
+    ("edito", "correct"),
+    ("Salir", "cancel"),
+    ("Descartar", "cancel"),
+    ("No", "cancel"),
+    ("nop", "cancel"),
+    ("cancela", "cancel"),
     ("REGISTRO", "unknown"),
+    ("nota", "unknown"),
+    ("silla", "unknown"),
     ("ventas", "unknown"),
     ("hola", "unknown"),
 ])
@@ -284,3 +304,113 @@ async def test_new_venta_while_awaiting_confirmation_restarts_flow(fake_sheets):
 
     assert mock_wa.sent_messages[-1]["text"] == MSG_VENTA_ASK_CODE
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_VENTA_CODE"
+
+
+# --- short synonyms only count as the WHOLE message ---
+
+@pytest.mark.parametrize("text,expected", [
+    ("no", "cancel"),
+    (" No. ", "cancel"),
+    ("salgo!", "cancel"),
+    ("ok", "confirm"),
+    ("Ok.", "confirm"),
+    ("  sí  ", "confirm"),
+    ("confirmo", "confirm"),
+    ("cancelo", "cancel"),
+    ("no, mejor mañana", "unknown"),
+    ("no tengo ruta para hoy", "unknown"),
+    ("ok gracias", "unknown"),
+    ("si quieres", "unknown"),
+    ("salgo a ruta", "unknown"),
+    ("dale que si", "unknown"),
+    ("listo para salir", "unknown"),
+    ("no cancelar", "cancel"),  # long words still match anywhere
+    ("quiero cancelar", "cancel"),
+    ("confirmo el plan", "confirm"),
+    ("quiero cambiar la ruta", "correct"),
+])
+def test_short_synonyms_need_whole_message(text, expected):
+    assert extract_planning_intent(text)["type"] == expected
+
+
+_DRAFT = {
+    "modalidad": "OFICINA", "vendedor_apoyo": "N/A", "codigo_erp_vendedor": "N/A",
+    "ruta_oficial": "N/A", "zona": "N/A", "codigo_ruta": "N/A", "dia": "N/A",
+    "fecha_trabajo": "2026-09-17", "sede": "SCZ", "supervisor": "Carlos Mendoza",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["no tengo ruta para hoy", "ok gracias"])
+async def test_sentences_do_not_cancel_or_confirm_a_pending_plan(fake_sheets, body):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+    svc.conversation_svc.set("70000001", "AWAITING_CONFIRMATION", payload={"draft": dict(_DRAFT)})
+
+    await svc.handle_message(_msg(body), eval_datetime=EVAL_DT)
+
+    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+    assert "pendiente de confirmación" in mock_wa.sent_messages[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_lone_no_cancels_and_lone_ok_confirms(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    svc.conversation_svc.set("70000001", "AWAITING_CONFIRMATION", payload={"draft": dict(_DRAFT)})
+    await svc.handle_message(_msg("no"), eval_datetime=EVAL_DT)
+    assert mock_wa.sent_messages[-1]["text"] == MSG_CANCELLED_NO_CHANGES
+    assert svc.conversation_svc.get("70000001") is None
+
+    svc.conversation_svc.set("70000001", "AWAITING_CONFIRMATION", payload={"draft": dict(_DRAFT)})
+    await svc.handle_message(_msg("ok", message_id="m2"), eval_datetime=EVAL_DT)
+    assert len(fake_sheets.get_all_records("PLANIFICACION_DIARIA")) == 1
+
+
+# --- required scenarios with a pending plan (AWAITING_CONFIRMATION) ---
+
+def _pending(svc):
+    svc.conversation_svc.set("70000001", "AWAITING_CONFIRMATION", payload={"draft": dict(_DRAFT)})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["ok", "confirmo"])
+async def test_lone_confirm_word_confirms_pending_plan(fake_sheets, body):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+    _pending(svc)
+
+    await svc.handle_message(_msg(body), eval_datetime=EVAL_DT)
+
+    assert len(fake_sheets.get_all_records("PLANIFICACION_DIARIA")) == 1
+    assert svc.conversation_svc.get("70000001") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["no", "cancelo", "quiero cancelar"])
+async def test_cancel_words_cancel_pending_plan(fake_sheets, body):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+    _pending(svc)
+
+    await svc.handle_message(_msg(body), eval_datetime=EVAL_DT)
+
+    assert mock_wa.sent_messages[-1]["text"] == MSG_CANCELLED_NO_CHANGES
+    assert svc.conversation_svc.get("70000001") is None
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["ok gracias", "no, mejor mañana"])
+async def test_short_word_inside_a_sentence_leaves_pending_plan_untouched(fake_sheets, body):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+    _pending(svc)
+
+    await svc.handle_message(_msg(body), eval_datetime=EVAL_DT)
+
+    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+    assert "pendiente de confirmación" in mock_wa.sent_messages[-1]["text"]

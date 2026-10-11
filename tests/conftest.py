@@ -74,3 +74,38 @@ def client():
     """FastAPI TestClient. No database overrides needed anymore."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def pinned_schedule(monkeypatch):
+    """
+    Pins the reminder schedule settings to the .env.example production values
+    (cooldown 60), so tests never depend on whatever the local .env sets,
+    and isolates tests from the real WAHA and from leaked conversation state.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    pinned = {
+        "REMINDER_INTERVAL_MINUTES": 30,
+        "REMINDER_COOLDOWN_MINUTES": 60,
+        "MONDAY_AM_WINDOW_START": "08:00",
+        "MONDAY_AM_ESCALATION_TIME": "12:00",
+        "MONDAY_PM_WINDOW_START": "15:00",
+        "MONDAY_PM_ESCALATION_TIME": "18:00",
+        "WEEKDAY_PM_WINDOW_START": "15:00",
+        "WEEKDAY_PM_ESCALATION_TIME": "18:00",
+        "SATURDAY_AM_WINDOW_START": "08:00",
+        "SATURDAY_AM_LAST_REMINDER": "11:30",
+    }
+    for name, value in pinned.items():
+        monkeypatch.setattr(settings, name, value)
+
+    # Never talk to a real WAHA from tests: WhatsAppClient only records
+    # messages in memory when it sees these placeholder values.
+    monkeypatch.setattr(settings, "WAHA_BASE_URL", "http://localhost:3000")
+    monkeypatch.setattr(settings, "WAHA_API_KEY", "placeholder_waha_api_key")
+
+    # Conversation state is process-wide; don't leak it between tests.
+    from app.services.conversation_service import _STORE
+    _STORE.clear()

@@ -98,11 +98,6 @@ MSG_REMINDER_AWAITING_SELECTION = (
     "⚠️ Tienes una selección pendiente. Responde con el número de la ruta."
 )
 
-MSG_REMINDER_SATURDAY_NOTICE = (
-    "📅 Recordatorio: puedes registrar tu planificación del lunes durante la reunión "
-    "de oficina del lunes por la mañana. ¡Buen fin de semana!"
-)
-
 
 def build_escalation_alert(
     fecha_trabajo: str,

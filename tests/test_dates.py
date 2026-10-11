@@ -12,25 +12,32 @@ from app.business.dates import (
 )
 
 
-def test_monday_before_cutoff():
-    """Lunes 08:00 (<= 08:30) debe calcular el mismo lunes."""
-    dt = datetime(2026, 9, 14, 8, 0, tzinfo=BOLIVIA_TZ)  # Lunes 14/09/2026
-    work_date = calculate_work_date(dt, monday_cutoff="08:30")
-    assert work_date == date(2026, 9, 14)
+def test_monday_am_targets_same_monday():
+    """Lunes antes del corte (15:00) calcula el mismo lunes (catch-up AM)."""
+    dt = datetime(2026, 9, 14, 9, 0, tzinfo=BOLIVIA_TZ)  # Lunes 14/09/2026
+    assert calculate_work_date(dt, monday_cutoff="15:00") == date(2026, 9, 14)
 
 
-def test_monday_exact_cutoff():
-    """Lunes exactamente 08:30:00 (<= 08:30) debe calcular el mismo lunes."""
-    dt = datetime(2026, 9, 14, 8, 30, 0, tzinfo=BOLIVIA_TZ)
-    work_date = calculate_work_date(dt, monday_cutoff="08:30")
-    assert work_date == date(2026, 9, 14)
+def test_monday_just_before_cutoff():
+    dt = datetime(2026, 9, 14, 14, 59, tzinfo=BOLIVIA_TZ)
+    assert calculate_work_date(dt, monday_cutoff="15:00") == date(2026, 9, 14)
 
 
-def test_monday_after_cutoff():
-    """Lunes después de 08:30 (08:31) debe calcular el martes."""
-    dt = datetime(2026, 9, 14, 8, 31, tzinfo=BOLIVIA_TZ)
-    work_date = calculate_work_date(dt, monday_cutoff="08:30")
-    assert work_date == date(2026, 9, 15)  # Martes
+def test_monday_exact_cutoff_targets_tuesday():
+    """Lunes a las 15:00 en punto ya planifica el martes."""
+    dt = datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ)
+    assert calculate_work_date(dt, monday_cutoff="15:00") == date(2026, 9, 15)
+
+
+def test_monday_pm_targets_tuesday():
+    dt = datetime(2026, 9, 14, 19, 0, tzinfo=BOLIVIA_TZ)
+    assert calculate_work_date(dt) == date(2026, 9, 15)
+
+
+def test_monday_cutoff_defaults_to_setting():
+    """Sin monday_cutoff explícito se usa MONDAY_PM_WINDOW_START."""
+    assert calculate_work_date(datetime(2026, 9, 14, 14, 0, tzinfo=BOLIVIA_TZ)) == date(2026, 9, 14)
+    assert calculate_work_date(datetime(2026, 9, 14, 16, 0, tzinfo=BOLIVIA_TZ)) == date(2026, 9, 15)
 
 
 def test_tuesday():
@@ -61,11 +68,16 @@ def test_friday():
     assert work_date == date(2026, 9, 19)  # Sábado (+1 día)
 
 
-def test_saturday():
-    """Sábado debe calcular el próximo lunes."""
+def test_saturday_am_targets_same_saturday():
+    """Sábado antes de las 12:00 calcula el mismo sábado."""
     dt = datetime(2026, 9, 19, 11, 0, tzinfo=BOLIVIA_TZ)  # Sábado
-    work_date = calculate_work_date(dt)
-    assert work_date == date(2026, 9, 21)  # Lunes siguiente (+2 días)
+    assert calculate_work_date(dt) == date(2026, 9, 19)
+
+
+def test_saturday_from_noon_targets_monday():
+    """Sábado desde las 12:00 calcula el próximo lunes."""
+    dt = datetime(2026, 9, 19, 12, 0, tzinfo=BOLIVIA_TZ)
+    assert calculate_work_date(dt) == date(2026, 9, 21)  # Lunes siguiente (+2 días)
 
 
 def test_sunday():

@@ -25,21 +25,28 @@ class Settings(BaseSettings):
 
     # Timezone and business operational rules
     TIMEZONE: str = "America/La_Paz"
-    MONDAY_CUTOFF_TIME: str = "08:30"
+
+    # Reminder scheduler: how often the cycle ticks, and the minimum gap
+    # between two reminders to the same supervisor.
     REMINDER_INTERVAL_MINUTES: int = 30
+    REMINDER_COOLDOWN_MINUTES: int = 60
 
-    # Planning window (Mon-Fri, America/La_Paz): outside this range the bot
-    # stays silent on new/free-text messages so the owner can reply manually.
-    # Also bounds when automatic reminders are sent.
-    PLANNING_WINDOW_START: str = "15:00"
-    PLANNING_WINDOW_END: str = "18:00"
-
-    # Escalation to the admin fires once the planning window ends (Mon-Fri).
-    REMINDER_ESCALATION_TIME: str = "18:00"
-
-    # Saturday: no periodic reminders, just a single informational notice at
-    # this time to whoever hasn't registered for the upcoming Monday.
-    SATURDAY_NOTICE_TIME: str = "11:45"
+    # Reminder schedule per day (America/La_Paz). Reminders target the next
+    # work day (see app/business/dates.py) except Monday AM and Saturday AM,
+    # which target the same day. At an *_ESCALATION_TIME the cycle stops
+    # reminding and escalates to the admin (once per supervisor/day).
+    # Monday: AM catch-up window (target: today), then the usual PM window.
+    MONDAY_AM_WINDOW_START: str = "08:00"
+    MONDAY_AM_ESCALATION_TIME: str = "12:00"
+    MONDAY_PM_WINDOW_START: str = "15:00"
+    MONDAY_PM_ESCALATION_TIME: str = "18:00"
+    # Tuesday-Friday: PM window only.
+    WEEKDAY_PM_WINDOW_START: str = "15:00"
+    WEEKDAY_PM_ESCALATION_TIME: str = "18:00"
+    # Saturday: AM window only (target: today), no escalation (the machine
+    # is switched off at 12:00).
+    SATURDAY_AM_WINDOW_START: str = "08:00"
+    SATURDAY_AM_LAST_REMINDER: str = "11:30"
 
     # Conversation state and supervisors cache (both in-memory; see
     # app/services/conversation_service.py and app/sheets/supervisors_repository.py)

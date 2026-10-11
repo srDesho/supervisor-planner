@@ -3,8 +3,9 @@ Core planning orchestrator service.
 
 Flow (see PARTE 6 of the spec): resolve sender phone -> authenticate ->
 AYUDA -> conversational state (AWAITING_CONFIRMATION / AWAITING_SELECTION /
-AWAITING_VENTA_CODE) -> day/window check -> new planning (seller code,
-VENTA, VENTA DIRECTA, OFICINA).
+AWAITING_VENTA_CODE) -> new planning (seller code, VENTA, VENTA DIRECTA,
+OFICINA). Incoming messages are attended at any day/hour; the schedule only
+governs the proactive reminders (see reminder_service).
 
 Silence policy: unresolvable senders and unauthorized phones get ZERO trace
 (no reply, no LOG_BOT). Authenticated supervisors always get an audit trail,
@@ -12,7 +13,7 @@ even when ignored for being outside the planning window.
 """
 import logging
 from typing import Any, Dict, Optional
-from datetime import datetime, time
+from datetime import datetime
 
 from app.config import get_settings
 from app.business.dates import calculate_work_date, get_weekday_code, get_current_bolivia_datetime
@@ -42,7 +43,7 @@ from app.whatsapp.templates import (
 )
 from app.whatsapp.client import WhatsAppClient
 from app.sheets.masters import MastersService
-from app.sheets.planning_repository import GoogleSheetsPlanningRepository
+from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
 from app.services.supervisor_service import SupervisorService
 from app.services.conversation_service import ConversationService
 from app.services.audit_service import AuditService
@@ -108,13 +109,14 @@ class PlanningService:
         entry = self.conversation_svc.get(phone)
         step = entry["state"] if entry else "IDLE"
 
-        # Silencio después de registrado: si ya tiene plan activo para la fecha y está en IDLE
+        # Silencio después de registrado: si ya tiene plan activo para la fecha y está en IDLE.
+        # Una fila PENDIENTE_ESCALADO no es un plan: quien fue escalado planifica con normalidad.
         fecha_trabajo = calculate_work_date(now)
         active = self.sheets_repo.find_active(
             fecha_trabajo.strftime("%Y-%m-%d"),
             sede, supervisor_name
         )
-        if active is not None and step == "IDLE":
+        if is_real_planning(active) and step == "IDLE":
             if intent["type"] in ("unknown", "confirm", "correct"):
                 self.audit_svc.log(
                     phone=phone,
@@ -141,23 +143,7 @@ class PlanningService:
             await self._handle_awaiting_venta_code(text, supervisor, phone, chat_id, message_id, now)
             return
 
-        # 5. IDLE: day/window check.
-        weekday = now.weekday()  # 0=Monday ... 6=Sunday
-        if weekday == 6 or weekday == 5 or not self._is_within_planning_window(now):
-            self.audit_svc.log(
-                phone=phone,
-                whatsapp_id=chat_id,
-                supervisor=supervisor_name,
-                sede=sede,
-                whatsapp_message_id=message_id,
-                original_message=text,
-                action="OUTSIDE_WINDOW",
-                result="IGNORED",
-                details="Mensaje ignorado: fuera de la ventana de planificación"
-            )
-            return
-
-        # 6. New planning.
+        # 5. New planning.
         await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
 
     # --- New planning (code_only / venta / venta_directa / oficina) ---
@@ -422,7 +408,7 @@ class PlanningService:
         active = self.sheets_repo.find_active(plan["fecha_trabajo"], sede, supervisor_name)
         self.conversation_svc.set(phone, "AWAITING_CONFIRMATION", payload={"draft": plan})
 
-        if active:
+        if is_real_planning(active):
             summary = build_confirmation_summary_update(fecha_trabajo, weekday_code, plan)
         else:
             summary = build_confirmation_summary(fecha_trabajo, weekday_code, plan)
@@ -573,13 +559,3 @@ class PlanningService:
             intent["codigo_erp"], MODALIDAD_VENTA,
             supervisor, phone, chat_id, message_id, now
         )
-
-    # --- helpers ---
-
-    def _is_within_planning_window(self, now: datetime) -> bool:
-        """True if `now` falls within [PLANNING_WINDOW_START, PLANNING_WINDOW_END] (America/La_Paz)."""
-        start_hour, start_minute = map(int, self.settings.PLANNING_WINDOW_START.split(":"))
-        end_hour, end_minute = map(int, self.settings.PLANNING_WINDOW_END.split(":"))
-        window_start = time(start_hour, start_minute)
-        window_end = time(end_hour, end_minute)
-        return window_start <= now.time() <= window_end

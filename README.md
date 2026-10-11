@@ -65,11 +65,12 @@ Todas están documentadas en `.env.example`.
 | Variable | Descripción | Valor por defecto |
 |---|---|---|
 | `TIMEZONE` | Zona horaria operativa | `America/La_Paz` |
-| `MONDAY_CUTOFF_TIME` | Hora de corte del lunes para calcular la fecha de trabajo (reservada: hoy el código usa `08:30` fijo) | `08:30` |
-| `PLANNING_WINDOW_START` / `PLANNING_WINDOW_END` | Ventana (lunes a viernes) en la que el bot acepta planificaciones nuevas y envía recordatorios | `15:00` / `18:00` |
-| `REMINDER_INTERVAL_MINUTES` | Cada cuántos minutos corre el ciclo de recordatorios | `30` |
-| `REMINDER_ESCALATION_TIME` | Hora a la que se escala al administrador a quienes no han planificado | `18:00` |
-| `SATURDAY_NOTICE_TIME` | Hora del aviso único de los sábados | `11:45` |
+| `REMINDER_INTERVAL_MINUTES` | Cada cuántos minutos corre el ciclo de recordatorios (debe dividir 60) | `30` |
+| `REMINDER_COOLDOWN_MINUTES` | Mínimo entre dos recordatorios al mismo supervisor (producción: `60`; `1` para pruebas) | `60` |
+| `MONDAY_AM_WINDOW_START` / `MONDAY_AM_ESCALATION_TIME` | Lunes AM: recordatorios para HOY desde la primera hora; desde la segunda, escalamiento | `08:00` / `12:00` |
+| `MONDAY_PM_WINDOW_START` / `MONDAY_PM_ESCALATION_TIME` | Lunes PM: recordatorios para MAÑANA; desde la segunda hora, escalamiento. La primera también es el corte lunes → martes de la fecha de trabajo | `15:00` / `18:00` |
+| `WEEKDAY_PM_WINDOW_START` / `WEEKDAY_PM_ESCALATION_TIME` | Martes a viernes: recordatorios para el día siguiente; desde la segunda hora, escalamiento | `15:00` / `18:00` |
+| `SATURDAY_AM_WINDOW_START` / `SATURDAY_AM_LAST_REMINDER` | Sábado: recordatorios para HOY entre ambas horas (el último ignora el cooldown). Sin escalamiento | `08:00` / `11:30` |
 | `GOOGLE_CREDENTIALS_PATH` | Ruta al JSON de la cuenta de servicio | `credentials/credentials.json` |
 | `GOOGLE_SPREADSHEET_ID` | ID del Google Sheet | — |
 | `WAHA_BASE_URL` | URL de WAHA (en Docker Compose: `http://supervisor-waha:3000`) | `http://localhost:3000` |
@@ -148,8 +149,8 @@ Los tests usan una hoja de cálculo simulada en memoria, por lo que no necesitan
 Antes de pasar a producción:
 
 - Verifica `DEBUG=false`.
-- Configura `REMINDER_INTERVAL_MINUTES` con el valor real (no el de pruebas).
-- Revisa que la ventana horaria (`PLANNING_WINDOW_START` / `PLANNING_WINDOW_END`) y `REMINDER_ESCALATION_TIME` sean los correctos.
+- Configura `REMINDER_INTERVAL_MINUTES` y `REMINDER_COOLDOWN_MINUTES` (60) con el valor real (no el de pruebas).
+- Revisa que las ventanas y horas de escalamiento por día (`MONDAY_*`, `WEEKDAY_*`, `SATURDAY_*`) sean las correctas.
 - Usa un `ADMIN_PHONE` real.
 
 **Nunca subas al repositorio** `.env`, `credentials/`, `waha_sessions/`, `logs/` ni `data/`.

@@ -140,3 +140,84 @@ async def test_cancel_clears_state(fake_sheets):
 
     records = fake_sheets.get_all_records("PLANIFICACION_DIARIA")
     assert len(records) == 0
+
+
+# --- summary adapted to the modality ---
+
+from datetime import date
+from app.business.planning_rules import build_confirmation_summary, build_confirmation_summary_update
+
+_FECHA = date(2026, 9, 17)  # Jueves
+
+
+def _plan(modalidad, **extra):
+    plan = {
+        "modalidad": modalidad, "vendedor_apoyo": "N/A", "codigo_erp_vendedor": "N/A",
+        "ruta_oficial": "N/A", "zona": "N/A", "codigo_ruta": "N/A", "dia": "N/A",
+        "fecha_trabajo": "2026-09-17", "sede": "SCZ", "supervisor": "Carlos Mendoza",
+    }
+    plan.update(extra)
+    return plan
+
+
+def test_oficina_summary_is_minimal():
+    summary = build_confirmation_summary(_FECHA, "4-JU", _plan("OFICINA"))
+    assert summary == (
+        "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
+        "🏢 Modalidad: OFICINA\n"
+        "📆 Fecha: 17/09/2026 (Jueves - 4-JU)\n"
+        "🏢 Sede: SCZ\n"
+        "👤 Supervisor: Carlos Mendoza\n\n"
+        "¿Registrar?\n\n"
+        "✅ CONFIRMAR\n"
+        "❌ CORREGIR"
+    )
+
+
+def test_venta_directa_summary_is_minimal():
+    summary = build_confirmation_summary(_FECHA, "4-JU", _plan("VENTA DIRECTA", vendedor_apoyo="VENTA DIRECTA"))
+    assert "🏢 Modalidad: VENTA DIRECTA" in summary
+    for hidden in ("Vendedor", "ERP", "Ruta", "Zona", "Código ruta", "N/A"):
+        assert hidden not in summary
+
+
+def test_acompanamiento_summary_is_full():
+    plan = _plan("ACOMPAÑAMIENTO", vendedor_apoyo="VENDEDOR UNO", codigo_erp_vendedor="4364",
+                 ruta_oficial="SC-RUTA-1", zona="N", codigo_ruta="R1")
+    summary = build_confirmation_summary(_FECHA, "4-JU", plan)
+    for shown in ("👤 Vendedor: VENDEDOR UNO", "🆔 ERP: 4364", "🗺️ Ruta: SC-RUTA-1",
+                  "🧭 Zona: N", "🔑 Código ruta: R1", "Sede: SCZ", "Supervisor: Carlos Mendoza"):
+        assert shown in summary
+    assert "Modalidad" not in summary
+
+
+def test_venta_summary_is_medium():
+    plan = _plan("VENTA", vendedor_apoyo="", vendedor_nombre="VENDEDOR UNO", codigo_erp_vendedor="4364",
+                 ruta_oficial="SC-RUTA-1", zona="N", codigo_ruta="R1")
+    summary = build_confirmation_summary(_FECHA, "4-JU", plan)
+    assert "🛒 Modalidad: VENTA (cubres la ruta solo)" in summary
+    assert "👤 VENDEDOR UNO" in summary
+    assert "Vendedor:" not in summary
+    assert "🗺️ Ruta: SC-RUTA-1" in summary
+
+
+@pytest.mark.parametrize("modalidad", ["OFICINA", "VENTA DIRECTA", "ACOMPAÑAMIENTO", "VENTA"])
+def test_update_summary_is_notice_plus_same_summary(modalidad):
+    plan = _plan(modalidad, vendedor_nombre="X")
+    update = build_confirmation_summary_update(_FECHA, "4-JU", plan)
+    base = build_confirmation_summary(_FECHA, "4-JU", plan)
+    assert update == f"⚠️ Vas a reemplazar tu planificación anterior.\n\n{base}"
+
+
+@pytest.mark.asyncio
+async def test_replacing_an_existing_planning_shows_replace_notice(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    await svc.handle_message(_msg("oficina", "m1"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("confirmar", "m2"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("venta directa", "m3"), eval_datetime=EVAL_DT)
+
+    text = mock_wa.sent_messages[-1]["text"]
+    assert text.startswith("⚠️ Vas a reemplazar tu planificación anterior.\n\n")
+    assert "🏢 Modalidad: VENTA DIRECTA" in text

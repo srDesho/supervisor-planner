@@ -1,6 +1,8 @@
 """
-Unit tests for the reminder/escalation schedule (Part 10.7).
-Lunes 14/09/2026 (Monday), Sábado 19/09/2026, Domingo 20/09/2026.
+Unit tests for the per-day reminder/escalation schedule.
+
+Calendar used: Monday 14/09/2026 ... Friday 18/09, Saturday 19/09,
+Sunday 20/09. The schedule settings are pinned by conftest (pinned_schedule).
 """
 import pytest
 from datetime import datetime
@@ -10,12 +12,19 @@ from app.services.reminder_service import ReminderService
 from app.sheets.planning_repository import GoogleSheetsPlanningRepository, _COLUMNS as PLANNING_COLUMNS
 from app.sheets.supervisors_repository import SupervisorsRepository, _COLUMNS as SUPERVISORS_COLUMNS
 from app.whatsapp.client import WhatsAppClient
-from app.whatsapp.templates import MSG_REMINDER_SATURDAY_NOTICE
 
 SUPERVISORS = [
-    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
-    {"Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
+
+PENDING_REMINDER = "Aún no hemos recibido tu planificación"
+ESCALATION_ALERT = "PLANIFICACIÓN PENDIENTE"
+
+
+def _dt(day, hour, minute=0):
+    """September 2026 datetime in Bolivia time."""
+    return datetime(2026, 9, day, hour, minute, tzinfo=BOLIVIA_TZ)
 
 
 def _make_service(fake_sheets, mock_wa):
@@ -28,133 +37,221 @@ def _make_service(fake_sheets, mock_wa):
     )
 
 
+def _reminders(mock_wa):
+    return [m for m in mock_wa.sent_messages if PENDING_REMINDER in m["text"]]
+
+
+def _alerts(mock_wa):
+    return [m for m in mock_wa.sent_messages if ESCALATION_ALERT in m["text"]]
+
+
+# --- schedule table: (day, hour, minute) -> action, target date ---
+
+REMINDER_CASES = [
+    # Monday AM: catch-up, target = Monday itself
+    ((14, 8, 0), "14/09/2026"),
+    ((14, 9, 0), "14/09/2026"),
+    ((14, 11, 0), "14/09/2026"),
+    # Monday PM: target = Tuesday
+    ((14, 15, 0), "15/09/2026"),
+    ((14, 16, 0), "15/09/2026"),
+    # Tuesday-Thursday PM: next day
+    ((15, 16, 0), "16/09/2026"),
+    ((16, 16, 0), "17/09/2026"),
+    ((17, 16, 0), "18/09/2026"),
+    # Friday PM: Saturday
+    ((18, 16, 0), "19/09/2026"),
+    # Saturday AM: target = Saturday itself
+    ((19, 8, 0), "19/09/2026"),
+    ((19, 10, 0), "19/09/2026"),
+    ((19, 11, 30), "19/09/2026"),
+]
+
+ESCALATION_CASES = [
+    # Monday after the AM cutoff: still for Monday
+    ((14, 12, 0), "14/09/2026"),
+    ((14, 13, 0), "14/09/2026"),
+    ((14, 14, 30), "14/09/2026"),
+    # Monday after the PM cutoff: Tuesday
+    ((14, 18, 0), "15/09/2026"),
+    ((14, 19, 0), "15/09/2026"),
+    # Tuesday-Friday after the cutoff
+    ((15, 18, 0), "16/09/2026"),
+    ((16, 19, 0), "17/09/2026"),
+    ((17, 18, 30), "18/09/2026"),
+    ((18, 18, 0), "19/09/2026"),
+]
+
+NO_ACTION_CASES = [
+    (14, 7, 59),   # Monday before the AM window
+    (15, 10, 0),   # Tuesday morning
+    (16, 14, 59),  # Wednesday just before the PM window
+    (19, 7, 59),   # Saturday before the AM window
+    (19, 11, 31),  # Saturday after the last reminder
+    (19, 12, 0),   # Saturday noon (machine off in reality)
+    (19, 16, 0),   # Saturday PM
+    (20, 10, 0),   # Sunday AM
+    (20, 16, 0),   # Sunday PM
+]
+
+
 @pytest.mark.asyncio
-async def test_monday_1500_sends_reminder_and_updates_last_reminder(fake_sheets):
+@pytest.mark.parametrize("when,target", REMINDER_CASES)
+async def test_reminder_ticks_target_the_right_date(fake_sheets, when, target):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    eval_dt = datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ)  # Lunes
-    await svc.run_reminder_cycle(eval_time=eval_dt)
+    await svc.run_reminder_cycle(eval_time=_dt(*when))
 
-    assert len(mock_wa.sent_messages) == 2
+    reminders = _reminders(mock_wa)
+    assert len(reminders) == 2  # both supervisors
+    assert all(target in m["text"] for m in reminders)
+    assert _alerts(mock_wa) == []
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when,target", ESCALATION_CASES)
+async def test_escalation_ticks_flag_the_right_date(fake_sheets, when, target):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    await svc.run_reminder_cycle(eval_time=_dt(*when))
+
+    assert _reminders(mock_wa) == []
+    alerts = _alerts(mock_wa)
+    assert len(alerts) == 1
+    assert f"Fecha de trabajo: {target}" in alerts[0]["text"]
+
+    rows = fake_sheets.get_all_records("PLANIFICACION_DIARIA")
+    day, month, year = target.split("/")
+    assert len(rows) == 2
+    assert all(r["Estado"] == "PENDIENTE_ESCALADO" for r in rows)
+    assert all(r["Fecha_Trabajo"] == f"{year}-{month}-{day}" for r in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", NO_ACTION_CASES)
+async def test_no_action_outside_schedule(fake_sheets, when):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    await svc.run_reminder_cycle(eval_time=_dt(*when))
+
+    assert mock_wa.sent_messages == []
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+@pytest.mark.asyncio
+async def test_saturday_never_escalates(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    for hour, minute in [(8, 0), (10, 0), (11, 30), (12, 0), (16, 0)]:
+        await svc.run_reminder_cycle(eval_time=_dt(19, hour, minute))
+
+    assert _alerts(mock_wa) == []
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+# --- cooldown ---
+
+@pytest.mark.asyncio
+async def test_cooldown_blocks_reminder_within_the_hour(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+
+    await svc.run_reminder_cycle(eval_time=_dt(14, 15, 0))
+    assert len(_reminders(mock_wa)) == 2
     row = svc.supervisors_repo.find_by_phone("70000001")
     assert row["Ultimo_Recordatorio"] == "2026-09-14 15:00:00"
 
+    await svc.run_reminder_cycle(eval_time=_dt(14, 15, 30))
+    assert len(_reminders(mock_wa)) == 2  # still inside the 60-min cooldown
 
-@pytest.mark.asyncio
-async def test_monday_1515_skips_due_to_cooldown(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
-    assert len(mock_wa.sent_messages) == 2
-
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 15, tzinfo=BOLIVIA_TZ))
-    assert len(mock_wa.sent_messages) == 2  # sin nuevos envíos, todavía dentro del cooldown
+    await svc.run_reminder_cycle(eval_time=_dt(14, 16, 0))
+    assert len(_reminders(mock_wa)) == 4  # cooldown elapsed
 
 
 @pytest.mark.asyncio
-async def test_monday_1530_sends_again_after_interval(fake_sheets):
+async def test_cooldown_is_configurable(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
+    svc.settings.REMINDER_COOLDOWN_MINUTES = 1  # restored by monkeypatch in conftest
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
-    assert len(mock_wa.sent_messages) == 2
+    await svc.run_reminder_cycle(eval_time=_dt(14, 15, 0))
+    await svc.run_reminder_cycle(eval_time=_dt(14, 15, 1))
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 30, tzinfo=BOLIVIA_TZ))
-    assert len(mock_wa.sent_messages) == 4
+    assert len(_reminders(mock_wa)) == 4
 
 
 @pytest.mark.asyncio
-async def test_monday_1800_escalates_instead_of_reminding(fake_sheets):
+async def test_cooldown_applies_on_monday_am(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 18, 0, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(14, 8, 0))
+    await svc.run_reminder_cycle(eval_time=_dt(14, 8, 30))
 
-    # Un solo mensaje: la alerta consolidada al admin, no un recordatorio por supervisor.
-    assert len(mock_wa.sent_messages) == 1
-    assert "PLANIFICACIÓN PENDIENTE" in mock_wa.sent_messages[0]["text"]
-    assert "Carlos Mendoza" in mock_wa.sent_messages[0]["text"]
-    assert "Maria Suarez" in mock_wa.sent_messages[0]["text"]
+    assert len(_reminders(mock_wa)) == 2
 
 
 @pytest.mark.asyncio
-async def test_monday_1400_outside_window_sends_nothing(fake_sheets):
+async def test_saturday_last_reminder_ignores_cooldown(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 14, 0, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(19, 11, 0))
+    assert len(_reminders(mock_wa)) == 2
 
-    assert len(mock_wa.sent_messages) == 0
+    await svc.run_reminder_cycle(eval_time=_dt(19, 11, 30))  # 30 min later, cooldown is 60
+    assert len(_reminders(mock_wa)) == 4
 
 
 @pytest.mark.asyncio
-async def test_saturday_1144_sends_nothing(fake_sheets):
+async def test_saturday_before_last_tick_still_respects_cooldown(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 19, 11, 44, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(19, 10, 0))
+    await svc.run_reminder_cycle(eval_time=_dt(19, 10, 30))
 
-    assert len(mock_wa.sent_messages) == 0
+    assert len(_reminders(mock_wa)) == 2
 
 
 @pytest.mark.asyncio
-async def test_saturday_1145_sends_single_notice(fake_sheets):
+async def test_last_reminder_tick_with_seconds_counts_as_1130(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 19, 11, 45, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(19, 11, 0))
+    await svc.run_reminder_cycle(
+        eval_time=datetime(2026, 9, 19, 11, 30, 0, 400000, tzinfo=BOLIVIA_TZ)
+    )
 
-    notices = [m for m in mock_wa.sent_messages if m["text"] == MSG_REMINDER_SATURDAY_NOTICE]
-    assert len(notices) == 2  # ambos supervisores
+    assert len(_reminders(mock_wa)) == 4
 
+
+# --- who gets reminded ---
 
 @pytest.mark.asyncio
-async def test_saturday_1200_does_not_duplicate(fake_sheets):
+async def test_registered_supervisor_is_not_reminded(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
-
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 19, 11, 45, tzinfo=BOLIVIA_TZ))
-    first_count = len(mock_wa.sent_messages)
-
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 19, 12, 0, tzinfo=BOLIVIA_TZ))
-    assert len(mock_wa.sent_messages) == first_count
-
-
-@pytest.mark.asyncio
-async def test_sunday_sends_nothing(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 20, 12, 0, tzinfo=BOLIVIA_TZ))
-
-    assert len(mock_wa.sent_messages) == 0
-
-
-@pytest.mark.asyncio
-async def test_supervisor_with_active_planning_gets_no_reminder(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-
-    # Lunes 15:00 -> fecha operativa martes 2026-09-15 (lunes por la tarde avanza al día siguiente).
     svc.sheets_repo.upsert("2026-09-15", "SCZ", "Carlos Mendoza", {"Modalidad": "OFICINA"})
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(14, 16, 0))
 
-    assert len(mock_wa.sent_messages) == 1  # solo Maria Suarez (CBBA)
+    reminders = _reminders(mock_wa)
+    assert [m["chat_id"] for m in reminders] == ["59170000002@c.us"]
 
 
 @pytest.mark.asyncio
 async def test_reminders_go_to_telefono_as_c_us_with_country_code(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
-    # Pin the schedule so the test doesn't depend on the local .env values.
-    svc.settings.PLANNING_WINDOW_START = "15:00"
-    svc.settings.PLANNING_WINDOW_END = "18:00"
-    svc.settings.REMINDER_ESCALATION_TIME = "18:00"
 
-    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
+    await svc.run_reminder_cycle(eval_time=_dt(14, 15, 0))
 
     assert sorted(m["chat_id"] for m in mock_wa.sent_messages) == [
         "59170000001@c.us",

@@ -20,12 +20,25 @@ _WEEKDAY_NAMES_ES = {
 def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
     """
     Builds the standardized confirmation summary shown to the supervisor
-    before writing to PLANIFICACION_DIARIA. Works for ACOMPAÑAMIENTO, VENTA,
-    VENTA DIRECTA and OFICINA alike — fields not applicable to a modality
-    already carry 'N/A' in `plan`.
+    before writing to PLANIFICACION_DIARIA, adapted to the modality:
+    - OFICINA / VENTA DIRECTA: minimal (no seller, route or zone to show).
+    - VENTA: modality line + name of the seller whose route is covered.
+    - ACOMPAÑAMIENTO: the full summary.
     """
     nombre_dia = _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()]
-    if plan.get("modalidad") == "VENTA":
+    modalidad = plan.get("modalidad")
+    if modalidad in ("OFICINA", "VENTA DIRECTA"):
+        return (
+            "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
+            f"🏢 Modalidad: {modalidad}\n"
+            f"📆 Fecha: {fecha_trabajo.strftime('%d/%m/%Y')} ({nombre_dia} - {weekday_code})\n"
+            f"🏢 Sede: {plan.get('sede', 'N/A')}\n"
+            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}\n\n"
+            "¿Registrar?\n\n"
+            "✅ CONFIRMAR\n"
+            "❌ CORREGIR"
+        )
+    if modalidad == "VENTA":
         # Vendedor_Apoyo is empty for VENTA (see _build_seller_plan), so no
         # "Vendedor:" label; show only the name of the seller whose route is covered.
         vendedor_line = (
@@ -52,7 +65,7 @@ def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dic
 
 def build_confirmation_summary_update(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
     """Same as build_confirmation_summary, prefixed with a replace-warning."""
-    notice = "⚠️ Ya tenías esta planificación registrada para hoy. Si confirmas, la reemplazas."
+    notice = "⚠️ Vas a reemplazar tu planificación anterior."
     base = build_confirmation_summary(fecha_trabajo, weekday_code, plan)
     return f"{notice}\n\n{base}"
 

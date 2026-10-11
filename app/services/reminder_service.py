@@ -101,13 +101,14 @@ class ReminderService:
                     continue
 
                 # Defensive: gspread may return numeric cells as int/float.
+                # Proactive sends always go to the Sheet's Telefono; the
+                # client turns it into '<digits>@c.us' (591 prefix if 8 digits).
                 phone = str(supervisor.get("Telefono", "") or "")
-                chat_id = str(supervisor.get("WhatsApp_ID") or phone)
 
                 msg = self._build_reminder_message(supervisor, fecha_trabajo, dia_trabajo)
-                await self.whatsapp_client.send_message(chat_id, msg)
+                await self.whatsapp_client.send_message(phone, msg)
                 self.supervisors_repo.update_last_reminder(phone, now.strftime("%Y-%m-%d %H:%M:%S"))
-                logger.info(f"Dispatched reminder to {supervisor.get('Nombre')} ({chat_id}).")
+                logger.info(f"Dispatched reminder to {supervisor.get('Nombre')} ({phone}).")
                 sent += 1
             except Exception as exc:
                 failed += 1
@@ -193,11 +194,10 @@ class ReminderService:
                     continue
 
                 phone = str(supervisor.get("Telefono", "") or "")
-                chat_id = str(supervisor.get("WhatsApp_ID") or phone)
 
-                await self.whatsapp_client.send_message(chat_id, MSG_REMINDER_SATURDAY_NOTICE)
+                await self.whatsapp_client.send_message(phone, MSG_REMINDER_SATURDAY_NOTICE)
                 self.supervisors_repo.update_last_reminder(phone, now.strftime("%Y-%m-%d %H:%M:%S"))
-                logger.info(f"Dispatched Saturday notice to {supervisor.get('Nombre')} ({chat_id}).")
+                logger.info(f"Dispatched Saturday notice to {supervisor.get('Nombre')} ({phone}).")
 
                 self.sheets_repo.mark_escalated(
                     fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")

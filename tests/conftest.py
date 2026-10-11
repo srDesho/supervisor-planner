@@ -74,20 +74,3 @@ def client():
     """FastAPI TestClient. No database overrides needed anymore."""
     with TestClient(app) as test_client:
         yield test_client
-
-
-@pytest.fixture
-def isolated_register_log(tmp_path, monkeypatch):
-    """
-    Redirects app.utils.register_log's REGISTER_ATTEMPTS_LOG_PATH to a temp
-    file, so tests never touch the real logs/registro_intentos.json.
-    """
-    import app.utils.register_log as register_log_module
-
-    log_path = tmp_path / "registro_intentos.json"
-
-    class _FakeSettings:
-        REGISTER_ATTEMPTS_LOG_PATH = str(log_path)
-
-    monkeypatch.setattr(register_log_module, "get_settings", lambda: _FakeSettings())
-    return log_path

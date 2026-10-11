@@ -10,22 +10,6 @@ MSG_UNRECOGNIZED_SENDER = (
     "Si consideras que esto es un error, por favor comunícate con el Administrador del sistema."
 )
 
-# --- REGISTRO ---
-
-MSG_REGISTER_OK = (
-    "✅ *REGISTRO EXITOSO*\n\n"
-    "Bienvenido(a) {nombre}. Tu cuenta de WhatsApp quedó vinculada correctamente."
-)
-
-MSG_ALREADY_REGISTERED = (
-    "ℹ️ Ya estás registrado como {nombre}."
-)
-
-MSG_REGISTER_INCOMPLETE_ROW = (
-    "⚠️ Tu número está en la lista, pero falta completar tu Nombre o Sede.\n"
-    "Comunícate con el administrador antes de registrarte."
-)
-
 MSG_SELLER_CODE_NOT_FOUND = (
     "⚠️ No encontré ningún vendedor con ese código en tu sede. Verifica el código e intenta de nuevo."
 )
@@ -39,7 +23,7 @@ MSG_SELLER_WRONG_ZONE = (
 )
 
 MSG_SELLER_ALREADY_ASSIGNED = (
-    "⚠️ El vendedor {vendedor} ya fue registrado para el {fecha} por {otro_supervisor}. No puedes acompañar al mismo vendedor el mismo día."
+    "⚠️ El vendedor {vendedor} ya fue registrado para el {fecha} por {otro_supervisor}. No puedes registrar al mismo vendedor el mismo día."
 )
 
 MSG_SELLER_NO_ROUTE_TODAY = (
@@ -81,14 +65,23 @@ MSG_SELECTION_TOO_MANY_ERRORS = (
     "❌ Demasiados intentos inválidos. Envía nuevamente tu código de vendedor."
 )
 
+MSG_VENTA_ASK_CODE = (
+    "🛒 ¿Cuál es el código del vendedor cuya ruta vas a cubrir?\n\n"
+    "Escribe solo el código (ej. 1691) o *CANCELAR* para salir."
+)
+
+MSG_VENTA_CODE_INVALID = (
+    "⚠️ No reconocí ese código. Envía solo el código del vendedor (3 a 6 dígitos), o *CANCELAR*."
+)
+
 MSG_HELP = (
     "📋 Para registrar tu planificación:\n\n"
-    "Solo escribe el código del vendedor:\n"
+    "Acompañar a un vendedor: escribe su código\n"
     "1691\n\n"
     "Otros casos:\n"
+    "• venta (cubrir la ruta de un vendedor tú solo)\n"
     "• venta directa\n"
     "• oficina\n"
-    "• REGISTRO (para activar tu cuenta la primera vez)\n"
     "• AYUDA (este mensaje)\n\n"
     "Horario: lunes a viernes de 15:00 a 18:00."
 )

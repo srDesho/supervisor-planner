@@ -19,7 +19,7 @@ OUTSIDE_WINDOW_DT = datetime(2026, 9, 16, 10, 0, tzinfo=BOLIVIA_TZ)  # Miércole
 SATURDAY_DT = datetime(2026, 9, 19, 11, 0, tzinfo=BOLIVIA_TZ)        # Sábado 11:00
 
 SUPERVISORS = [
-    {"WhatsApp_ID": "", "Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
 
 

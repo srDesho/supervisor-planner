@@ -11,8 +11,8 @@ from app.sheets.supervisors_repository import SupervisorsRepository, _COLUMNS as
 from app.whatsapp.client import WhatsAppClient
 
 SUPERVISORS = [
-    {"WhatsApp_ID": "", "Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
-    {"WhatsApp_ID": "", "Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
 
 

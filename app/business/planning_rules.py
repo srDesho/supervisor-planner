@@ -20,14 +20,23 @@ _WEEKDAY_NAMES_ES = {
 def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
     """
     Builds the standardized confirmation summary shown to the supervisor
-    before writing to PLANIFICACION_DIARIA. Works for ACOMPAÑAMIENTO,
+    before writing to PLANIFICACION_DIARIA. Works for ACOMPAÑAMIENTO, VENTA,
     VENTA DIRECTA and OFICINA alike — fields not applicable to a modality
     already carry 'N/A' in `plan`.
     """
     nombre_dia = _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()]
+    if plan.get("modalidad") == "VENTA":
+        # Vendedor_Apoyo is empty for VENTA (see _build_seller_plan), so no
+        # "Vendedor:" label; show only the name of the seller whose route is covered.
+        vendedor_line = (
+            "🛒 Modalidad: VENTA (cubres la ruta solo)\n"
+            f"👤 {plan.get('vendedor_nombre', 'N/A')}\n"
+        )
+    else:
+        vendedor_line = f"👤 Vendedor: {plan.get('vendedor_apoyo', 'N/A')}\n"
     return (
         "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
-        f"👤 Vendedor: {plan.get('vendedor_apoyo', 'N/A')}\n"
+        f"{vendedor_line}"
         f"🆔 ERP: {plan.get('codigo_erp_vendedor', 'N/A')}\n"
         f"🗺️ Ruta: {plan.get('ruta_oficial', 'N/A')}\n"
         f"🧭 Zona: {plan.get('zona', 'N/A')}\n"

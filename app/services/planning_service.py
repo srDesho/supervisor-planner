@@ -1,14 +1,14 @@
 """
 Core planning orchestrator service.
 
-Flow (see PARTE 6 of the spec): resolve sender phone -> REGISTRO command ->
-authenticate -> AYUDA -> conversational state (AWAITING_CONFIRMATION /
-AWAITING_SELECTION) -> day/window check -> new planning by seller code.
+Flow (see PARTE 6 of the spec): resolve sender phone -> authenticate ->
+AYUDA -> conversational state (AWAITING_CONFIRMATION / AWAITING_SELECTION /
+AWAITING_VENTA_CODE) -> day/window check -> new planning (seller code,
+VENTA, VENTA DIRECTA, OFICINA).
 
-Silence policy: unresolvable senders, unauthorized phones, and unauthorized
-REGISTRO attempts get ZERO trace (no reply, no LOG_BOT). Authenticated
-supervisors always get an audit trail, even when ignored for being outside
-the planning window.
+Silence policy: unresolvable senders and unauthorized phones get ZERO trace
+(no reply, no LOG_BOT). Authenticated supervisors always get an audit trail,
+even when ignored for being outside the planning window.
 """
 import logging
 from typing import Any, Dict, Optional
@@ -21,13 +21,10 @@ from app.business.planning_rules import (
     build_confirmation_summary_update,
     build_selection_prompt
 )
-from app.whatsapp.parser import ParsedWhatsAppMessage, is_register_command, extract_planning_intent
+from app.whatsapp.parser import ParsedWhatsAppMessage, extract_planning_intent
 from app.whatsapp.lid_resolver import resolve_to_phone
 from app.whatsapp.templates import (
     MSG_HELP,
-    MSG_REGISTER_OK,
-    MSG_ALREADY_REGISTERED,
-    MSG_REGISTER_INCOMPLETE_ROW,
     MSG_SELLER_CODE_NOT_FOUND,
     MSG_SELLER_NO_ROUTE_TODAY,
     MSG_SUPERVISOR_NO_ZONE,
@@ -39,10 +36,11 @@ from app.whatsapp.templates import (
     MSG_CORRECT_REQUESTED,
     MSG_CANCELLED_NO_CHANGES,
     MSG_SELECTION_INVALID,
-    MSG_SELECTION_TOO_MANY_ERRORS
+    MSG_SELECTION_TOO_MANY_ERRORS,
+    MSG_VENTA_ASK_CODE,
+    MSG_VENTA_CODE_INVALID
 )
 from app.whatsapp.client import WhatsAppClient
-from app.utils.register_log import log_unauthorized_register_attempt
 from app.sheets.masters import MastersService
 from app.sheets.planning_repository import GoogleSheetsPlanningRepository
 from app.services.supervisor_service import SupervisorService
@@ -50,6 +48,9 @@ from app.services.conversation_service import ConversationService
 from app.services.audit_service import AuditService
 
 MAX_SELECTION_ATTEMPTS = 3
+
+MODALIDAD_ACOMPANAMIENTO = "ACOMPAÑAMIENTO"
+MODALIDAD_VENTA = "VENTA"
 
 logger = logging.getLogger(__name__)
 
@@ -88,14 +89,7 @@ class PlanningService:
         if not phone:
             return
 
-        # 2. REGISTRO command — checked before authentication, since it
-        # exists precisely for phones the system administrator already whitelisted but that
-        # haven't captured their WhatsApp_ID yet.
-        if is_register_command(text):
-            await self._handle_register(phone, chat_id, message_id, text)
-            return
-
-        # 3. Authenticate. Not in SUPERVISORES (or inactive) => zero trace.
+        # 2. Authenticate. Not in SUPERVISORES (or inactive) => zero trace.
         supervisor = self.supervisor_svc.authenticate(phone)
         if not supervisor:
             return
@@ -103,13 +97,13 @@ class PlanningService:
         sede = supervisor["Sede"]
         supervisor_name = supervisor["Nombre"]
 
-        # 5. AYUDA/HELP is always available, in any conversational state.
+        # 3. AYUDA/HELP is always available, in any conversational state.
         intent = extract_planning_intent(text)
         if intent["type"] == "help":
             await self.whatsapp_client.send_message(chat_id, MSG_HELP)
             return
 
-        # 6. Conversational state (in-memory, keyed by phone).
+        # 4. Conversational state (in-memory, keyed by phone).
         now = eval_datetime or get_current_bolivia_datetime()
         entry = self.conversation_svc.get(phone)
         step = entry["state"] if entry else "IDLE"
@@ -143,7 +137,11 @@ class PlanningService:
             await self._handle_awaiting_selection(text, entry, supervisor, phone, chat_id)
             return
 
-        # 7. IDLE: day/window check.
+        if step == "AWAITING_VENTA_CODE":
+            await self._handle_awaiting_venta_code(text, supervisor, phone, chat_id, message_id, now)
+            return
+
+        # 5. IDLE: day/window check.
         weekday = now.weekday()  # 0=Monday ... 6=Sunday
         if weekday == 6 or weekday == 5 or not self._is_within_planning_window(now):
             self.audit_svc.log(
@@ -159,38 +157,10 @@ class PlanningService:
             )
             return
 
-        # 8. New planning.
+        # 6. New planning.
         await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
 
-    # --- REGISTRO ---
-
-    async def _handle_register(self, phone: str, chat_id: str, message_id: str, text: str) -> None:
-        row = self.supervisor_svc.repo.find_by_phone(phone)
-        if row is None:
-            log_unauthorized_register_attempt(chat_id, phone, text)
-            return  # Total silence toward the sender; no LOG_BOT entry.
-
-        status, nombre = self.supervisor_svc.register_supervisor(phone, chat_id)
-
-        if status == "SUCCESS":
-            await self.whatsapp_client.send_message(chat_id, MSG_REGISTER_OK.format(nombre=nombre))
-        elif status == "ALREADY_REGISTERED":
-            await self.whatsapp_client.send_message(chat_id, MSG_ALREADY_REGISTERED.format(nombre=nombre))
-        elif status == "INCOMPLETE_ROW":
-            await self.whatsapp_client.send_message(chat_id, MSG_REGISTER_INCOMPLETE_ROW)
-
-        self.audit_svc.log(
-            phone=phone,
-            whatsapp_id=chat_id,
-            supervisor=nombre,
-            sede=row.get("Sede"),
-            whatsapp_message_id=message_id,
-            original_message=text,
-            action="SELF_REGISTER",
-            result=status
-        )
-
-    # --- New planning (code_only / venta_directa / oficina) ---
+    # --- New planning (code_only / venta / venta_directa / oficina) ---
 
     async def _handle_new_planning(
         self,
@@ -208,111 +178,16 @@ class PlanningService:
         weekday_code = get_weekday_code(fecha_trabajo)
 
         if intent["type"] == "code_only":
-            codigo_erp = intent["codigo_erp"]
-
-            # Validación de zona del supervisor
-            zona = supervisor.get("Zona")
-            if not zona or not str(zona).strip():
-                await self.whatsapp_client.send_message(chat_id, MSG_SUPERVISOR_NO_ZONE)
-                self.audit_svc.log(
-                    phone=phone,
-                    whatsapp_id=chat_id,
-                    supervisor=supervisor_name,
-                    sede=sede,
-                    whatsapp_message_id=message_id,
-                    original_message=str(codigo_erp),
-                    action="REJECTED_NO_ZONE",
-                    result="REJECTED",
-                    details="Supervisor no tiene zona asignada en hoja SUPERVISORES"
-                )
-                return
-
-            supervisor_zona = str(zona).strip()
-            seller_rows = self.masters_service.get_seller_by_code_and_zone(
-                sede, codigo_erp, supervisor_zona
+            await self._handle_seller_code(
+                intent["codigo_erp"], MODALIDAD_ACOMPANAMIENTO,
+                supervisor, phone, chat_id, message_id, now
             )
-            if not seller_rows:
-                other_seller_rows = self.masters_service.get_seller_by_code(sede, codigo_erp)
-                if other_seller_rows:
-                    first_other = other_seller_rows[0]
-                    vendedor_name = first_other.get("VENDEDOR", "")
-                    zona_vendedor = first_other.get("ZONA", "")
-                    msg = MSG_SELLER_WRONG_ZONE.format(
-                        codigo=codigo_erp,
-                        vendedor=vendedor_name,
-                        zona_vendedor=zona_vendedor
-                    )
-                    await self.whatsapp_client.send_message(chat_id, msg)
-                    self.audit_svc.log(
-                        phone=phone,
-                        whatsapp_id=chat_id,
-                        supervisor=supervisor_name,
-                        sede=sede,
-                        whatsapp_message_id=message_id,
-                        original_message=str(codigo_erp),
-                        action="REJECTED_WRONG_ZONE",
-                        result="REJECTED",
-                        details=f"Vendedor pertenece a zona {zona_vendedor}, supervisor tiene {supervisor_zona}"
-                    )
-                    return
-                else:
-                    await self.whatsapp_client.send_message(chat_id, MSG_SELLER_CODE_NOT_FOUND)
-                    return
+            return
 
-            routes = [r for r in seller_rows if str(r.get("DIA", "")).strip() == weekday_code]
-            if not routes:
-                await self.whatsapp_client.send_message(chat_id, MSG_SELLER_NO_ROUTE_TODAY)
-                return
-
-            seller_row = seller_rows[0]
-
-            # Prevenir doble registro del mismo vendedor el mismo día
-            duplicate = self.sheets_repo.find_seller_duplicate(
-                fecha_trabajo_str, codigo_erp, supervisor_name, sede
-            )
-            if duplicate is not None:
-                otro_supervisor = duplicate.get("Supervisor", "")
-                vendedor_nombre = duplicate.get("Vendedor_Apoyo") or seller_row.get("VENDEDOR", "")
-                msg = MSG_SELLER_ALREADY_ASSIGNED.format(
-                    vendedor=vendedor_nombre,
-                    fecha=fecha_trabajo.strftime("%d/%m/%Y"),
-                    otro_supervisor=otro_supervisor
-                )
-                await self.whatsapp_client.send_message(chat_id, msg)
-                self.audit_svc.log(
-                    phone=phone,
-                    whatsapp_id=chat_id,
-                    supervisor=supervisor_name,
-                    sede=sede,
-                    whatsapp_message_id=message_id,
-                    original_message=str(codigo_erp),
-                    action="REJECTED_DUPLICATE_SELLER",
-                    result="REJECTED",
-                    details=f"Vendedor ya registrado por {otro_supervisor}"
-                )
-                return
-
-            if len(routes) == 1:
-                plan = self._build_plan_dict(
-                    modalidad="ACOMPAÑAMIENTO",
-                    vendedor_apoyo=seller_row.get("VENDEDOR", ""),
-                    codigo_erp_vendedor=codigo_erp,
-                    route_row=routes[0],
-                    fecha_trabajo=fecha_trabajo_str,
-                    sede=sede,
-                    supervisor=supervisor_name
-                )
-                await self._propose_for_confirmation(plan, chat_id, phone, fecha_trabajo, weekday_code, sede, supervisor_name)
-                return
-
-            self.conversation_svc.set(phone, "AWAITING_SELECTION", payload={
-                "candidates": routes,
-                "seller_row": seller_row,
-                "codigo_erp": codigo_erp,
-                "fecha_trabajo": fecha_trabajo_str,
-                "attempts": 0
-            })
-            await self.whatsapp_client.send_message(chat_id, build_selection_prompt(routes))
+        if intent["type"] == "venta":
+            # Ask which seller's route will be covered; the code arrives next.
+            self.conversation_svc.set(phone, "AWAITING_VENTA_CODE")
+            await self.whatsapp_client.send_message(chat_id, MSG_VENTA_ASK_CODE)
             return
 
         if intent["type"] == "venta_directa":
@@ -343,6 +218,165 @@ class PlanningService:
 
         # unknown / confirm / correct / cancel with nothing pending: just help.
         await self.whatsapp_client.send_message(chat_id, MSG_HELP)
+
+    async def _handle_seller_code(
+        self,
+        codigo_erp: str,
+        modalidad: str,
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        message_id: str,
+        now: datetime
+    ) -> None:
+        """
+        Seller-code planning shared by ACOMPAÑAMIENTO (code alone) and VENTA
+        (code sent after 'venta'): zone check, today's route(s), duplicate
+        check, then a confirmation proposal (or route selection if several).
+        Only the modalidad differs between the two.
+        """
+        sede = supervisor["Sede"]
+        supervisor_name = supervisor["Nombre"]
+        fecha_trabajo = calculate_work_date(now)
+        fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
+        weekday_code = get_weekday_code(fecha_trabajo)
+
+        # Validación de zona del supervisor
+        zona = supervisor.get("Zona")
+        if not zona or not str(zona).strip():
+            await self.whatsapp_client.send_message(chat_id, MSG_SUPERVISOR_NO_ZONE)
+            self.audit_svc.log(
+                phone=phone,
+                whatsapp_id=chat_id,
+                supervisor=supervisor_name,
+                sede=sede,
+                whatsapp_message_id=message_id,
+                original_message=str(codigo_erp),
+                action="REJECTED_NO_ZONE",
+                result="REJECTED",
+                details="Supervisor no tiene zona asignada en hoja SUPERVISORES"
+            )
+            return
+
+        supervisor_zona = str(zona).strip()
+        seller_rows = self.masters_service.get_seller_by_code_and_zone(
+            sede, codigo_erp, supervisor_zona
+        )
+        if not seller_rows:
+            other_seller_rows = self.masters_service.get_seller_by_code(sede, codigo_erp)
+            if other_seller_rows:
+                first_other = other_seller_rows[0]
+                vendedor_name = first_other.get("VENDEDOR", "")
+                zona_vendedor = first_other.get("ZONA", "")
+                msg = MSG_SELLER_WRONG_ZONE.format(
+                    codigo=codigo_erp,
+                    vendedor=vendedor_name,
+                    zona_vendedor=zona_vendedor
+                )
+                await self.whatsapp_client.send_message(chat_id, msg)
+                self.audit_svc.log(
+                    phone=phone,
+                    whatsapp_id=chat_id,
+                    supervisor=supervisor_name,
+                    sede=sede,
+                    whatsapp_message_id=message_id,
+                    original_message=str(codigo_erp),
+                    action="REJECTED_WRONG_ZONE",
+                    result="REJECTED",
+                    details=f"Vendedor pertenece a zona {zona_vendedor}, supervisor tiene {supervisor_zona}"
+                )
+                return
+            else:
+                await self.whatsapp_client.send_message(chat_id, MSG_SELLER_CODE_NOT_FOUND)
+                return
+
+        routes = [r for r in seller_rows if str(r.get("DIA", "")).strip() == weekday_code]
+        if not routes:
+            await self.whatsapp_client.send_message(chat_id, MSG_SELLER_NO_ROUTE_TODAY)
+            return
+
+        seller_row = seller_rows[0]
+
+        # Prevenir doble registro del mismo vendedor el mismo día
+        duplicate = self.sheets_repo.find_seller_duplicate(
+            fecha_trabajo_str, codigo_erp, supervisor_name, sede
+        )
+        if duplicate is not None:
+            otro_supervisor = duplicate.get("Supervisor", "")
+            # VENTA rows have an empty Vendedor_Apoyo -> use the master's name.
+            vendedor_nombre = duplicate.get("Vendedor_Apoyo") or seller_row.get("VENDEDOR", "")
+            msg = MSG_SELLER_ALREADY_ASSIGNED.format(
+                vendedor=vendedor_nombre,
+                fecha=fecha_trabajo.strftime("%d/%m/%Y"),
+                otro_supervisor=otro_supervisor
+            )
+            await self.whatsapp_client.send_message(chat_id, msg)
+            self.audit_svc.log(
+                phone=phone,
+                whatsapp_id=chat_id,
+                supervisor=supervisor_name,
+                sede=sede,
+                whatsapp_message_id=message_id,
+                original_message=str(codigo_erp),
+                action="REJECTED_DUPLICATE_SELLER",
+                result="REJECTED",
+                details=f"Vendedor ya registrado por {otro_supervisor}"
+            )
+            return
+
+        if len(routes) == 1:
+            plan = self._build_seller_plan(
+                modalidad, seller_row, codigo_erp, routes[0],
+                fecha_trabajo_str, sede, supervisor_name
+            )
+            await self._propose_for_confirmation(plan, chat_id, phone, fecha_trabajo, weekday_code, sede, supervisor_name)
+            return
+
+        self.conversation_svc.set(phone, "AWAITING_SELECTION", payload={
+            "candidates": routes,
+            "seller_row": seller_row,
+            "codigo_erp": codigo_erp,
+            "modalidad": modalidad,
+            "fecha_trabajo": fecha_trabajo_str,
+            "attempts": 0
+        })
+        await self.whatsapp_client.send_message(chat_id, build_selection_prompt(routes))
+        return
+
+    def _build_seller_plan(
+        self,
+        modalidad: str,
+        seller_row: Dict[str, Any],
+        codigo_erp: str,
+        route_row: Dict[str, Any],
+        fecha_trabajo: str,
+        sede: str,
+        supervisor: str
+    ) -> Dict[str, Any]:
+        """
+        Plan for a seller-code planning. ACOMPAÑAMIENTO records the seller as
+        Vendedor_Apoyo; VENTA (supervisor covers the route alone) records an
+        empty string there and keeps the seller's name in `vendedor_nombre`,
+        which is only used for the confirmation summary and never written to
+        the Sheet.
+        """
+        seller_name = seller_row.get("VENDEDOR", "")
+        plan = self._build_plan_dict(
+            modalidad=modalidad,
+            # TEMPORARY: VENTA stores "" in Vendedor_Apoyo (the supervisor goes
+            # alone, there is no supporting seller), while OFICINA and
+            # VENTA DIRECTA still store "N/A". The inconsistency is deliberate
+            # for now; unify the "no value" convention in a future refactor.
+            vendedor_apoyo="" if modalidad == MODALIDAD_VENTA else seller_name,
+            codigo_erp_vendedor=codigo_erp,
+            route_row=route_row,
+            fecha_trabajo=fecha_trabajo,
+            sede=sede,
+            supervisor=supervisor
+        )
+        if modalidad == MODALIDAD_VENTA:
+            plan["vendedor_nombre"] = seller_name
+        return plan
 
     def _build_plan_dict(
         self,
@@ -454,7 +488,7 @@ class PlanningService:
             await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
             return
 
-        if intent["type"] in ("code_only", "venta_directa", "oficina"):
+        if intent["type"] in ("code_only", "venta", "venta_directa", "oficina"):
             # A fresh planning submission overwrites the pending draft.
             await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
             return
@@ -505,16 +539,40 @@ class PlanningService:
         fecha_trabajo_date = datetime.strptime(fecha_trabajo_str, "%Y-%m-%d").date()
         weekday_code = get_weekday_code(fecha_trabajo_date)
 
-        plan = self._build_plan_dict(
-            modalidad="ACOMPAÑAMIENTO",
-            vendedor_apoyo=seller_row.get("VENDEDOR", ""),
-            codigo_erp_vendedor=payload["codigo_erp"],
-            route_row=route_row,
-            fecha_trabajo=fecha_trabajo_str,
-            sede=sede,
-            supervisor=supervisor_name
+        plan = self._build_seller_plan(
+            payload.get("modalidad", MODALIDAD_ACOMPANAMIENTO), seller_row,
+            payload["codigo_erp"], route_row, fecha_trabajo_str, sede, supervisor_name
         )
         await self._propose_for_confirmation(plan, chat_id, phone, fecha_trabajo_date, weekday_code, sede, supervisor_name)
+
+    # --- AWAITING_VENTA_CODE ---
+
+    async def _handle_awaiting_venta_code(
+        self,
+        text: str,
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        message_id: str,
+        now: datetime
+    ) -> None:
+        intent = extract_planning_intent(text)
+
+        if intent["type"] == "cancel":
+            self.conversation_svc.clear(phone)
+            await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
+            return
+
+        if intent["type"] != "code_only":
+            await self.whatsapp_client.send_message(chat_id, MSG_VENTA_CODE_INVALID)
+            return
+
+        # Same validations as a plain seller code; a rejection leaves the
+        # state in AWAITING_VENTA_CODE so the supervisor can retry another code.
+        await self._handle_seller_code(
+            intent["codigo_erp"], MODALIDAD_VENTA,
+            supervisor, phone, chat_id, message_id, now
+        )
 
     # --- helpers ---
 

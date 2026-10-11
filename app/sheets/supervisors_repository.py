@@ -2,10 +2,10 @@
 Supervisors repository backed by the SUPERVISORES Google Sheet (whitelist).
 
 Columnas EXACTAS (fila 1):
-WhatsApp_ID | Telefono | Nombre | Sede | Activo | Ultimo_Recordatorio
+Nombre | Telefono | Sede | Zona | Activo | Ultimo_Recordatorio
 
-El administrador pre-carga Telefono, Nombre, Sede, Activo=TRUE. El bot llena
-WhatsApp_ID al REGISTRO y Ultimo_Recordatorio cuando envía un recordatorio.
+El administrador pre-carga Nombre, Telefono, Sede, Zona, Activo=TRUE. El bot
+solo escribe Ultimo_Recordatorio cuando envía un recordatorio.
 """
 import logging
 import time
@@ -18,9 +18,8 @@ from .client import GoogleSheetsClient, GoogleSheetsError
 logger = logging.getLogger(__name__)
 
 _COLUMNS = [
-    "WhatsApp_ID",
-    "Telefono",
     "Nombre",
+    "Telefono",
     "Sede",
     "Zona",
     "Activo",
@@ -89,10 +88,6 @@ class SupervisorsRepository:
         self.client.update_row(self.worksheet_name, row_index, values)
         self._last_refresh = 0.0  # force refresh on next read
         return merged
-
-    def update_whatsapp_id(self, phone: str, whatsapp_id: str) -> Optional[Dict[str, Any]]:
-        """Persists the supervisor's resolved WhatsApp chatId, captured on REGISTRO."""
-        return self.update_row_by_phone(phone, WhatsApp_ID=whatsapp_id)
 
     def update_last_reminder(self, phone: str, timestamp: str) -> Optional[Dict[str, Any]]:
         """Records the last reminder sent timestamp for the given phone."""

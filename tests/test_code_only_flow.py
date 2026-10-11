@@ -21,7 +21,7 @@ from app.whatsapp.templates import MSG_SELLER_NO_ROUTE_TODAY, MSG_SELLER_CODE_NO
 EVAL_DT = datetime(2026, 9, 16, 16, 0, tzinfo=BOLIVIA_TZ)
 
 SUPERVISORS = [
-    {"WhatsApp_ID": "", "Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
 
 MASTER_ROWS = [

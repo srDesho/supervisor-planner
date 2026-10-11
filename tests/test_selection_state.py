@@ -20,13 +20,13 @@ from app.whatsapp.templates import MSG_SELECTION_TOO_MANY_ERRORS
 EVAL_DT = datetime(2026, 9, 16, 16, 0, tzinfo=BOLIVIA_TZ)  # Miércoles -> Jueves (4-JU)
 
 SUPERVISORS = [
-    {"WhatsApp_ID": "", "Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
 
 MASTER_ROWS = [
     {"RUTA": "SC-RUTA-2", "ZONA": "N", "DIA": "4-JU", "VENDEDOR": "VENDEDOR DOS", "CODIGO ERP": "4140", "CODIGO RUTA": "R2"},
-    {"RUTA": "SC-RUTA-3", "ZONA": "S", "DIA": "4-JU", "VENDEDOR": "VENDEDOR DOS", "CODIGO ERP": "4140", "CODIGO RUTA": "R3"},
-    {"RUTA": "SC-RUTA-4", "ZONA": "E", "DIA": "4-JU", "VENDEDOR": "VENDEDOR DOS", "CODIGO ERP": "4140", "CODIGO RUTA": "R4"},
+    {"RUTA": "SC-RUTA-3", "ZONA": "N", "DIA": "4-JU", "VENDEDOR": "VENDEDOR DOS", "CODIGO ERP": "4140", "CODIGO RUTA": "R3"},
+    {"RUTA": "SC-RUTA-4", "ZONA": "N", "DIA": "4-JU", "VENDEDOR": "VENDEDOR DOS", "CODIGO ERP": "4140", "CODIGO RUTA": "R4"},
 ]
 
 

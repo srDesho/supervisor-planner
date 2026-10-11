@@ -1,7 +1,6 @@
 """
 Unit tests for total silence toward unauthorized (non-whitelisted) phones (Part 10.2).
-Not in SUPERVISORES + any message other than REGISTRO => zero trace: no
-reply, no LOG_BOT entry, no registro_intentos.json entry.
+Not in SUPERVISORES + any message => zero trace: no reply, no LOG_BOT entry.
 """
 import pytest
 from datetime import datetime
@@ -40,9 +39,9 @@ def _msg(body):
     return ParsedWhatsAppMessage(event="message", session="default", message_id="m1", from_phone="79999999", body=body)
 
 
-@pytest.mark.parametrize("body", ["hola", "4140", "CONFIRMAR", "AYUDA"])
+@pytest.mark.parametrize("body", ["hola", "4140", "CONFIRMAR", "AYUDA", "VENTA", "REGISTRO"])
 @pytest.mark.asyncio
-async def test_unauthorized_phone_is_totally_silent(fake_sheets, isolated_register_log, body):
+async def test_unauthorized_phone_is_totally_silent(fake_sheets, body):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
 
@@ -50,4 +49,3 @@ async def test_unauthorized_phone_is_totally_silent(fake_sheets, isolated_regist
 
     assert len(mock_wa.sent_messages) == 0
     assert fake_sheets.get_all_records("LOG_BOT") == []
-    assert not isolated_register_log.exists()

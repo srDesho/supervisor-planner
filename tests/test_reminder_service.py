@@ -13,8 +13,8 @@ from app.whatsapp.client import WhatsAppClient
 from app.whatsapp.templates import MSG_REMINDER_SATURDAY_NOTICE
 
 SUPERVISORS = [
-    {"WhatsApp_ID": "", "Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
-    {"WhatsApp_ID": "", "Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000001", "Nombre": "Carlos Mendoza", "Sede": "SCZ", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
+    {"Telefono": "70000002", "Nombre": "Maria Suarez", "Sede": "CBBA", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
 ]
 
 
@@ -143,3 +143,34 @@ async def test_supervisor_with_active_planning_gets_no_reminder(fake_sheets):
     await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
 
     assert len(mock_wa.sent_messages) == 1  # solo Maria Suarez (CBBA)
+
+
+@pytest.mark.asyncio
+async def test_reminders_go_to_telefono_as_c_us_with_country_code(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _make_service(fake_sheets, mock_wa)
+    # Pin the schedule so the test doesn't depend on the local .env values.
+    svc.settings.PLANNING_WINDOW_START = "15:00"
+    svc.settings.PLANNING_WINDOW_END = "18:00"
+    svc.settings.REMINDER_ESCALATION_TIME = "18:00"
+
+    await svc.run_reminder_cycle(eval_time=datetime(2026, 9, 14, 15, 0, tzinfo=BOLIVIA_TZ))
+
+    assert sorted(m["chat_id"] for m in mock_wa.sent_messages) == [
+        "59170000001@c.us",
+        "59170000002@c.us",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recipient,expected", [
+    ("70000001", "59170000001@c.us"),
+    (70000001, "59170000001@c.us"),
+    ("+591 7000-0001", "59170000001@c.us"),
+    ("59170000001", "59170000001@c.us"),
+    ("88283556139076@lid", "88283556139076@lid"),
+])
+async def test_client_formats_recipient(recipient, expected):
+    wa = WhatsAppClient()
+    await wa.send_message(recipient, "hola")
+    assert wa.sent_messages[-1]["chat_id"] == expected

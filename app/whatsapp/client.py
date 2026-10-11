@@ -27,16 +27,14 @@ class WhatsAppClient:
 
     async def send_message(self, recipient_phone: str, text: str) -> bool:
         """
-        Sends a WhatsApp text message to a chatId via WAHA.
+        Sends a WhatsApp text message via WAHA.
 
-        `recipient_phone` should always be the full chatId as received from an
-        inbound WAHA event (e.g. '{phone}@lid' under GOWS, or '{phone}@c.us' /
-        '{id}@g.us' under other engines) — callers must pass it through
-        unchanged rather than rebuild it. Reconstructing '{digits}@c.us' from a
-        bare number only works for legacy engines and breaks GOWS/LID senders
-        with "no LID found". The bare-number fallback below exists solely for
-        proactive sends with no inbound chatId to reuse (reminders, admin
-        alerts) and is not a substitute for the real chatId.
+        `recipient_phone` is either:
+        - a full chatId (contains '@'), used as-is — replies to an inbound
+          message reuse the sender's chatId (e.g. '{lid}@lid') unchanged; or
+        - a bare phone number (proactive sends: reminders, admin alerts),
+          which is turned into '{digits}@c.us': non-digits are stripped and,
+          if 8 digits remain, the Bolivian country code '591' is prepended.
 
         NOTE: recipient_phone is coerced to str defensively because Google
         Sheets (gspread) returns numeric phone cells as int, not str.
@@ -47,12 +45,10 @@ class WhatsAppClient:
         if "@" in recipient_phone:
             chat_id = recipient_phone
         else:
-            clean_digits = "".join(ch for ch in recipient_phone if ch.isdigit())
-            chat_id = f"{clean_digits}@c.us"
-            logger.warning(
-                f"send_message received a bare phone number ({recipient_phone}); "
-                f"reconstructed chatId as {chat_id}. This may fail under GOWS/LID."
-            )
+            digits = "".join(ch for ch in recipient_phone if ch.isdigit())
+            if len(digits) == 8:
+                digits = f"591{digits}"
+            chat_id = f"{digits}@c.us"
 
         payload = {
             "session": self.session_name,

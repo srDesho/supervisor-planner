@@ -46,10 +46,6 @@ class Settings(BaseSettings):
     CONVERSATION_TTL_MINUTES: int = 30
     SUPERVISORS_CACHE_TTL_SECONDS: int = 300
 
-    # Unauthorized REGISTRO attempts (phone not in SUPERVISORES) leave zero
-    # trace anywhere except this local JSON file.
-    REGISTER_ATTEMPTS_LOG_PATH: str = "logs/registro_intentos.json"
-
     # Google Sheets Configuration — all persistence lives here, no local database.
     GOOGLE_CREDENTIALS_PATH: str = "credentials/credentials.json"
     GOOGLE_SPREADSHEET_ID: str = "placeholder_spreadsheet_id"

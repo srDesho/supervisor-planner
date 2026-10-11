@@ -2,7 +2,7 @@
 Parser and data extractor for WAHA webhook events.
 Cleans WhatsApp IDs, normalizes phone numbers and extracts message body.
 Also holds the deterministic (non-AI) command/intent recognizers used by
-the planning flow: is_register_command() and extract_planning_intent().
+the planning flow: extract_planning_intent().
 """
 import re
 from typing import Dict, Any, Optional
@@ -80,49 +80,47 @@ def parse_waha_webhook(payload: Dict[str, Any]) -> Optional[ParsedWhatsAppMessag
     )
 
 
-_REGISTER_PATTERN = re.compile(r"^\s*registro\s*[.!]?\s*$", re.IGNORECASE)
+_CODE_ONLY_PATTERN = re.compile(r"^(\d{3,6})$")
+_VENTA_DIRECTA_PATTERN = re.compile(r"^venta\s+directa$")
+_VENTA_PATTERN = re.compile(r"^venta$")
+_OFICINA_PATTERN = re.compile(r"\boficina\b")
+_CONFIRM_PATTERN = re.compile(r"\bconfirmar\b")
+_CORRECT_PATTERN = re.compile(r"\bcorregir\b")
+_CANCEL_PATTERN = re.compile(r"\bcancelar\b")
+_HELP_PATTERN = re.compile(r"\bayuda\b|\bhelp\b")
 
 
-def is_register_command(text: str) -> bool:
-    """
-    True if `text` is, case-insensitively and accent-tolerantly, exactly
-    the word 'registro' (optionally followed by '.' or '!').
-    """
-    if not text:
-        return False
-    return bool(_REGISTER_PATTERN.match(unidecode(text)))
-
-
-_CODE_ONLY_PATTERN = re.compile(r"^\s*(\d{3,6})\s*$")
-_OFICINA_PATTERN = re.compile(r"(?i)\boficina\b")
-_VENTA_DIRECTA_PATTERN = re.compile(r"(?i)\bventa\s*directa\b")
-_CONFIRM_PATTERN = re.compile(r"(?i)\bconfirmar\b")
-_CORRECT_PATTERN = re.compile(r"(?i)\bcorregir\b")
-_CANCEL_PATTERN = re.compile(r"(?i)\bcancelar\b")
-_HELP_PATTERN = re.compile(r"(?i)\bayuda\b|\bhelp\b")
+def _normalize_command(text: str) -> str:
+    """Lowercase, accent-free, trimmed, with inner whitespace collapsed."""
+    return " ".join(unidecode(text or "").lower().split())
 
 
 def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
     """
     Deterministic (non-AI) intent extraction for the planning flow.
     Returns {"type": ..., "codigo_erp": str | None, "raw": text}.
+
+    Evaluation order matters: "venta directa" (two words) is checked before
+    "venta" (one word).
     """
     raw = text or ""
-    stripped = raw.strip()
+    normalized = _normalize_command(raw)
 
-    code_match = _CODE_ONLY_PATTERN.match(stripped)
+    if _VENTA_DIRECTA_PATTERN.match(normalized):
+        return {"type": "venta_directa", "codigo_erp": None, "raw": raw}
+    if _VENTA_PATTERN.match(normalized):
+        return {"type": "venta", "codigo_erp": None, "raw": raw}
+    if _OFICINA_PATTERN.search(normalized):
+        return {"type": "oficina", "codigo_erp": None, "raw": raw}
+    code_match = _CODE_ONLY_PATTERN.match(normalized)
     if code_match:
         return {"type": "code_only", "codigo_erp": code_match.group(1), "raw": raw}
-    if _OFICINA_PATTERN.search(stripped):
-        return {"type": "oficina", "codigo_erp": None, "raw": raw}
-    if _VENTA_DIRECTA_PATTERN.search(stripped):
-        return {"type": "venta_directa", "codigo_erp": None, "raw": raw}
-    if _CONFIRM_PATTERN.search(stripped):
-        return {"type": "confirm", "codigo_erp": None, "raw": raw}
-    if _CORRECT_PATTERN.search(stripped):
-        return {"type": "correct", "codigo_erp": None, "raw": raw}
-    if _CANCEL_PATTERN.search(stripped):
-        return {"type": "cancel", "codigo_erp": None, "raw": raw}
-    if _HELP_PATTERN.search(stripped):
+    if _HELP_PATTERN.search(normalized):
         return {"type": "help", "codigo_erp": None, "raw": raw}
+    if _CONFIRM_PATTERN.search(normalized):
+        return {"type": "confirm", "codigo_erp": None, "raw": raw}
+    if _CORRECT_PATTERN.search(normalized):
+        return {"type": "correct", "codigo_erp": None, "raw": raw}
+    if _CANCEL_PATTERN.search(normalized):
+        return {"type": "cancel", "codigo_erp": None, "raw": raw}
     return {"type": "unknown", "codigo_erp": None, "raw": raw}

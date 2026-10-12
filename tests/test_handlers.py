@@ -292,3 +292,14 @@ async def test_failed_log_has_the_error_and_the_traceback(planning, caplog):
     assert f"Failed message from {SUPERVISOR_PHONE} id=m1 in " in failed[0].getMessage()
     assert "Sheets exploded" in failed[0].getMessage()
     assert failed[0].exc_info is not None  # full stack trace
+
+
+@pytest.mark.asyncio
+async def test_final_punctuation_does_not_make_a_text_different_for_the_duplicate_filter(planning, clock):
+    await handlers.handle_whatsapp_event(_msg("ok", "m1"))
+    clock.t += 0.5
+    assert await handlers.handle_whatsapp_event(_msg("ok.", "m2")) is False   # "ok" == "ok."
+    clock.t += 0.5
+    assert await handlers.handle_whatsapp_event(_msg("  OK!  ", "m3")) is False
+
+    assert planning.calls == 1

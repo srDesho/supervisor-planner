@@ -331,10 +331,10 @@ async def test_new_ruta_while_awaiting_confirmation_restarts_flow(fake_sheets):
     ("salgo a ruta", "unknown"),
     ("dale que si", "unknown"),
     ("listo para salir", "unknown"),
-    ("no cancelar", "cancel"),  # long words still match anywhere
-    ("quiero cancelar", "cancel"),
-    ("confirmo el plan", "confirm"),
-    ("quiero cambiar la ruta", "correct"),
+    ("no cancelar", "unknown"),            # a command only matches when it IS the whole message
+    ("quiero cancelar", "unknown"),
+    ("confirmo el plan", "unknown"),
+    ("quiero cambiar la ruta", "unknown"),
 ])
 def test_short_synonyms_need_whole_message(text, expected):
     assert extract_planning_intent(text)["type"] == expected
@@ -396,7 +396,7 @@ async def test_lone_confirm_word_confirms_pending_plan(fake_sheets, body):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", ["no", "cancelo", "quiero cancelar"])
+@pytest.mark.parametrize("body", ["no", "cancelo", "Cancelar."])
 async def test_cancel_words_cancel_pending_plan(fake_sheets, body):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)

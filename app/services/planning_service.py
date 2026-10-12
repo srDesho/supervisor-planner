@@ -27,7 +27,8 @@ from app.business.planning_rules import (
     weekday_name_es
 )
 from app.whatsapp.parser import (
-    ParsedWhatsAppMessage, extract_planning_intent, extract_ruta_input, parse_menu_choice
+    ParsedWhatsAppMessage, extract_planning_intent, extract_ruta_input, normalize_command,
+    parse_menu_choice, parse_number
 )
 from app.whatsapp.lid_resolver import resolve_to_phone
 from app.whatsapp.templates import (
@@ -837,18 +838,20 @@ class PlanningService:
     ) -> None:
         payload = entry["payload"]
         candidates = payload["candidates"]
-        upper = text.strip().upper()
         sede = supervisor["Sede"]
         supervisor_name = supervisor["Nombre"]
 
-        if upper == "CANCELAR":
+        # Same normalization as every other command; only the word "cancelar" and
+        # plain numbers are recognized in this step.
+        if normalize_command(text) == "cancelar":
             self.conversation_svc.clear(phone)
             await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
             return
 
         selected_index = None
-        if upper.isdigit():
-            idx = int(upper)
+        number = parse_number(text)
+        if number is not None:
+            idx = int(number)
             if 1 <= idx <= len(candidates):
                 selected_index = idx - 1
 

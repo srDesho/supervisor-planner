@@ -773,3 +773,289 @@ async def test_cancel_words_without_a_plan_still_show_the_menu(setup):
     await _say(svc, "cancelar")
 
     assert _last(wa) == MAIN_MENU
+
+
+# ---------- Exact matching in every state (a sentence containing a command is NOT that command) ----------
+
+from app.whatsapp.templates import MSG_CANCELLED_NO_CHANGES as _CANCELLED  # noqa: E402,F401
+from app.whatsapp.templates import MSG_PLAN_ALREADY_ACTIVE, MSG_RUTA_LIST_BAD_PAGE, MSG_SELECTION_INVALID  # noqa: E402
+
+SENTENCES = [
+    "hola",
+    "quiero corregir algo",
+    "necesito una ayuda",
+    "el ok de la reunión",
+    "dame la ruta por favor",
+    "necesito ir a oficina mañana",
+    "venta directa es mejor",
+    "confirmo el plan",
+    "quiero cancelar",
+]
+
+
+# --- IDLE with a saved plan: total silence unless the message IS a command ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sentence", SENTENCES)
+async def test_idle_with_a_plan_stays_silent_for_sentences(setup, sentence):
+    svc, wa, sheets = setup
+    await _with_saved_plan(svc)
+    count = len(wa.sent_messages)
+    before = sheets.get_all_records("PLANIFICACION_DIARIA")
+
+    await _say(svc, sentence)
+
+    assert len(wa.sent_messages) == count
+    assert _state(svc) is None
+    assert sheets.get_all_records("PLANIFICACION_DIARIA") == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word", ["ok", "sí", "dale", "listo", "confirmar"])
+async def test_idle_with_a_plan_confirm_words_stay_silent(setup, word):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    count = len(wa.sent_messages)
+
+    await _say(svc, word)
+
+    assert len(wa.sent_messages) == count
+
+
+# --- IDLE with a saved plan: the exact commands still answer ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["CORREGIR", "corregir.", " CORREGIR ", "Corregir", "cambiar", "editar"])
+async def test_idle_with_a_plan_corregir_shows_the_plan_and_option_5(setup, text):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, text)
+
+    assert _last(wa).startswith("📋 Tu planificación actual es:") and _last(wa).endswith(KEEP_MENU)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["AYUDA", "ayuda.", "Ayuda", "help"])
+async def test_idle_with_a_plan_ayuda_opens_the_menu_with_option_5(setup, text):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, text)
+
+    assert _last(wa) == f"{KEEP_MENU}\n\n{MSG_MAIN_MENU_COMMANDS_HINT}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["4287", "4287.", " 4287 "])
+async def test_idle_with_a_plan_a_direct_seller_code_runs_the_normal_flow(setup, text):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, text)
+
+    draft = _draft(svc)
+    assert draft["modalidad"] == "ACOMPAÑAMIENTO" and draft["codigo_erp_vendedor"] == "4287"
+    assert _last(wa).startswith("⚠️ Vas a reemplazar")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word", ["cancelar", "Cancelar.", "no", "nop", "salir", "descartar"])
+async def test_idle_with_a_plan_cancel_words_say_nothing_is_pending(setup, word):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, word)
+
+    assert _last(wa) == MSG_NOTHING_PENDING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["RUTA", "ruta.", "Ruta."])
+async def test_idle_with_a_plan_ruta_opens_the_ruta_menu(setup, text):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, text)
+
+    assert _last(wa) == MSG_RUTA_MENU
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["VENTA DIRECTA", "venta    directa", "Venta directa."])
+async def test_venta_directa_tolerates_case_spaces_and_final_punctuation(setup, text):
+    svc, wa, _ = setup
+    await _with_saved_plan(svc)
+    await _say(svc, text)
+
+    assert _draft(svc)["modalidad"] == "VENTA DIRECTA"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["OFICINA", "oficina.", "Oficína"])
+async def test_oficina_tolerates_case_accents_and_final_punctuation(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, text)
+
+    assert _draft(svc)["modalidad"] == "OFICINA"
+
+
+# --- IDLE without a plan: anything unknown gets Menu 1 (and sentences are not commands) ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sentence", SENTENCES)
+async def test_idle_without_a_plan_sentences_get_the_main_menu(setup, sentence):
+    svc, wa, sheets = setup
+    await _say(svc, sentence)
+
+    assert _last(wa) == MAIN_MENU                      # plain Menu 1: not AYUDA's (no commands hint), not a flow
+    assert sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+# --- AWAITING_CONFIRMATION ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["ok pero cambia la ruta", "ok gracias", "quiero cancelar", "confirmo el plan",
+                                  "quiero corregir algo", "necesito una ayuda"])
+async def test_confirmation_sentences_repeat_the_summary(setup, text):
+    svc, wa, sheets = setup
+    await _say(svc, "oficina", text)
+
+    assert "CONFIRMA TU PLANIFICACIÓN" in _last(wa) and _last(wa).endswith("Responde con el número.")
+    assert _draft(svc)["modalidad"] == "OFICINA"                   # not confirmed, corrected or cancelled
+    assert sheets.get_all_records("PLANIFICACION_DIARIA") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["ok", "sí", "si", " SI ", "Confirmar.", "CONFIRMAR", "confirrmar", "listo", "dale", "Ok."])
+async def test_confirmation_exact_confirm_words_confirm(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, "oficina", text)
+
+    assert _last(wa) == MSG_REGISTERED_OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["corregir.", " CORREGIR ", "cambiar", "editar", "Corregir"])
+async def test_confirmation_exact_correct_words_correct(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, "oficina", text)
+
+    assert _last(wa).startswith("📋 No tienes una planificación registrada")   # Menu 4
+    assert _state(svc) == "AWAITING_MAIN_MENU"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["cancelar.", "CANCELAR", "no", "nop", "salir", "descartar"])
+async def test_confirmation_exact_cancel_words_cancel(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, "oficina", text)
+
+    assert _last(wa) == MSG_CANCELLED_NO_CHANGES and _state(svc) is None
+
+
+# --- AWAITING_MAIN_MENU: only an exact single digit is an option ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["1 de octubre", "10", "11", "1a", "1,5", "uno"])
+async def test_main_menu_does_not_take_these_as_option_1(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, "AYUDA", text)
+
+    assert _last(wa) == MAIN_MENU and _state(svc) == "AWAITING_MAIN_MENU"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["1", " 1 ", "1.", "1)", "1 )"])
+async def test_main_menu_option_1_tolerates_spaces_and_punctuation(setup, text):
+    svc, wa, _ = setup
+    await _say(svc, "AYUDA", text)
+
+    assert _last(wa) == MSG_ASK_SELLER_CODE and _state(svc) == "AWAITING_SELLER_CODE"
+
+
+# --- RUTA / seller code steps ---
+
+@pytest.mark.asyncio
+async def test_after_ruta_a_two_digit_route_code_is_a_code_not_option_1(setup):
+    svc, wa, _ = setup
+    await _say(svc, "RUTA", "10")
+
+    assert _draft(svc)["ruta_oficial"] == "SC-RUTA-A"
+
+
+@pytest.mark.asyncio
+async def test_a_one_digit_number_in_the_seller_step_is_a_code(setup):
+    svc, wa, _ = setup
+    await _say(svc, "AYUDA", "1", "1")
+
+    assert _last(wa) == MSG_SELLER_CODE_NOT_FOUND and _state(svc) == "AWAITING_SELLER_CODE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [["RUTA"], ["RUTA", "1"], ["RUTA", "2"], ["AYUDA", "1"]])
+async def test_a_sentence_with_cancelar_does_not_cancel_the_flow(setup, path):
+    svc, wa, _ = setup
+    await _say(svc, *path, "quiero cancelar algo")
+
+    assert _last(wa) != MSG_CANCELLED_NO_CHANGES
+    assert _state(svc) in ("AWAITING_RUTA_CODE", "AWAITING_SELLER_CODE")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,page", [("lista 3", 3), ("Lista  2.", 2)])
+async def test_lista_with_a_page_number_in_the_ruta_flow(setup, text, page):
+    svc, wa, _ = setup
+    await _say(svc, "RUTA", text)
+
+    assert _last(wa) == MSG_RUTA_LIST_BAD_PAGE.format(pages=1)       # only 1 page exists: the number was understood
+
+
+@pytest.mark.asyncio
+async def test_a_direct_code_with_a_final_dot_works_in_the_ruta_flow(setup):
+    svc, wa, _ = setup
+    await _say(svc, "RUTA", "4287.")
+
+    assert _draft(svc)["codigo_erp_vendedor"] == "4287"
+
+
+# --- AWAITING_SELECTION: the common normalization, only "cancelar" and numbers ---
+
+async def _two_routes(svc):
+    svc.masters_service.update_cache("SCZ", MASTER_ROWS + [_r("SC-RUTA-E", "DANVER", "4287", "300")])
+    await _say(svc, "4287")
+    assert _state(svc) == "AWAITING_SELECTION"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["cancelar", "CANCELAR", "Cancelar.", " cancelar "])
+async def test_selection_cancel_tolerates_case_and_punctuation(setup, text):
+    svc, wa, _ = setup
+    await _two_routes(svc)
+    await _say(svc, text)
+
+    assert _last(wa) == MSG_CANCELLED_NO_CHANGES and _state(svc) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["no", "salir", "quiero cancelar", "cancela", "²²", "1 y 2", "uno"])
+async def test_selection_only_accepts_cancelar_and_numbers(setup, text):
+    svc, wa, _ = setup
+    await _two_routes(svc)
+    await _say(svc, text)
+
+    assert _last(wa) == MSG_SELECTION_INVALID and _state(svc) == "AWAITING_SELECTION"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["2", " 2 ", "2.", "2)"])
+async def test_selection_numbers_tolerate_spaces_and_punctuation(setup, text):
+    svc, wa, _ = setup
+    await _two_routes(svc)
+    await _say(svc, text)
+
+    assert _draft(svc)["codigo_ruta"] == "300"
+
+
+@pytest.mark.asyncio
+async def test_selection_with_a_superscript_digit_does_not_crash(setup):
+    svc, wa, _ = setup
+    await _two_routes(svc)
+    await _say(svc, "²")                      # str.isdigit() accepts it and int() used to blow up
+
+    assert _state(svc) in ("AWAITING_SELECTION", "AWAITING_CONFIRMATION")

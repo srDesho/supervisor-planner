@@ -139,7 +139,7 @@ Responde con el número.
 | **Corregir** (cambiar) | `2` | `corregir`, `corrige`, `corrijo`, `cambiar`, `cambia`, `editar`, `edito` |
 | **Cancelar** (descartar) | `3` | `cancelar`, `cancela`, `cancelo`, `descartar`, `no`, `nop`, `salir`, `salgo` |
 
-> **Importante:** las palabras cortas (`ok`, `dale`, `listo`, `si`, `no`, `nop`, `salir`, `salgo`) solo cuentan cuando son **todo el mensaje**. "No tengo ruta para hoy" **no** cancela tu planificación, y "ok gracias" **no** la confirma. Las palabras largas (`confirmar`, `cancelar`, `corregir`…) sí se reconocen dentro de una frase.
+> **Importante:** toda palabra de comando (`confirmar`, `cancelar`, `corregir`, `ok`, `no`, `oficina`, `ruta`, `ayuda`…) solo cuenta cuando es **todo el mensaje**. Una frase que la contenga **no** se toma como comando: "no tengo ruta para hoy" no cancela tu planificación, "ok gracias" no la confirma, y "quiero cancelar", "confirmo el plan" o "necesito una ayuda" tampoco activan nada. No importan las mayúsculas, las tildes, los espacios de más ni el punto o signo final: `Corregir.` es igual a `corregir`.
 
 Si en lugar de responder envías **otro comando** (otro código, `oficina`, `ruta`…), el bot reemplaza el borrador por tu nueva elección.
 
@@ -206,7 +206,7 @@ Responde con el número.
 | `OFICINA` | Registrar oficina |
 | `CONFIRMAR`, `CORREGIR`, `CANCELAR` | Responder al resumen (o `1`, `2`, `3`) |
 
-Las mayúsculas y las tildes no importan: `Sí`, `si` y `SI` son lo mismo.
+Las mayúsculas, las tildes y el punto o signo final no importan: `Sí`, `si`, `SI.` y `Ruta.` funcionan igual que `si` y `ruta`. Pero el comando debe ser **todo el mensaje**.
 
 ## 9. Mensajes del bot y qué hacer
 

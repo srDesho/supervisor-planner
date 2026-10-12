@@ -418,7 +418,7 @@ Responde con el número.</div>
     </div>
     <div class="warn">
       <span class="callout-title">Importante</span>
-      Las palabras cortas (<code>ok</code>, <code>dale</code>, <code>listo</code>, <code>si</code>, <code>no</code>, <code>nop</code>, <code>salir</code>, <code>salgo</code>) solo cuentan cuando son <strong>todo el mensaje</strong>. “No tengo ruta para hoy” <strong>no</strong> cancela tu planificación y “ok gracias” <strong>no</strong> la confirma. Las palabras largas (<code>confirmar</code>, <code>cancelar</code>, <code>corregir</code>…) sí se reconocen dentro de una frase.
+      Toda palabra de comando (<code>confirmar</code>, <code>cancelar</code>, <code>corregir</code>, <code>ok</code>, <code>no</code>, <code>oficina</code>, <code>ruta</code>, <code>ayuda</code>…) solo cuenta cuando es <strong>todo el mensaje</strong>. Una frase que la contenga <strong>no</strong> se toma como comando: “no tengo ruta para hoy” no cancela tu planificación, “ok gracias” no la confirma, y “quiero cancelar”, “confirmo el plan” o “necesito una ayuda” tampoco activan nada. No importan las mayúsculas, las tildes, los espacios de más ni el punto o signo final: <code>Corregir.</code> es igual a <code>corregir</code>.
     </div>
     <p>Si en lugar de responder envías <strong>otro comando</strong> (otro código, <code>oficina</code>, <code>ruta</code>…), el bot reemplaza el borrador por tu nueva elección.</p>
 
@@ -490,7 +490,7 @@ Responde con el número.</div>
         </tbody>
       </table>
     </div>
-    <p>Las mayúsculas y las tildes no importan: <code>Sí</code>, <code>si</code> y <code>SI</code> son lo mismo.</p>
+    <p>Las mayúsculas, las tildes y el punto o signo final no importan: <code>Sí</code>, <code>si</code>, <code>SI.</code> y <code>Ruta.</code> funcionan igual que <code>si</code> y <code>ruta</code>. Pero el comando debe ser <strong>todo el mensaje</strong>.</p>
 
     <h3 id="s9">9. Mensajes del bot y qué hacer</h3>
     <div class="table-wrap">

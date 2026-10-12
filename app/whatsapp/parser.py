@@ -80,30 +80,46 @@ def parse_waha_webhook(payload: Dict[str, Any]) -> Optional[ParsedWhatsAppMessag
     )
 
 
-_CODE_ONLY_PATTERN = re.compile(r"^(\d{3,6})$")
-_VENTA_DIRECTA_PATTERN = re.compile(r"^venta\s+directa$")
-_RUTA_PATTERN = re.compile(r"^ruta$")
-_OFICINA_PATTERN = re.compile(r"\boficina\b")
-# Text is accent-free and lowercase when matched, so "sí" arrives as "si".
+# ---------------------------------------------------------------------------
+# Command matching = EXACT equality on the normalized text.
 #
-# Long, unambiguous command words match as a whole word ANYWHERE in the
-# message. "confir+mar" also tolerates the typo "confirrmar".
-_CONFIRM_PATTERN = re.compile(r"\b(?:confir+mar|confirma|confirmo)\b")
-_CORRECT_PATTERN = re.compile(
-    r"\b(?:corregir|corrige|corrijo|cambiar|cambia|editar|edito)\b"
-)
-_CANCEL_PATTERN = re.compile(r"\b(?:cancelar|cancela|cancelo|descartar)\b")
-# Short words collide with everyday sentences ("no tengo ruta", "ok gracias"),
-# so they only count when they ARE the whole message (optionally followed by
-# a single '.' or '!').
-_CONFIRM_SHORT_PATTERN = re.compile(r"^(?:ok|okey|dale|listo|si)\s*[.!]?$")
-_CANCEL_SHORT_PATTERN = re.compile(r"^(?:no|nop|salir|salgo)\s*[.!]?$")
-_HELP_PATTERN = re.compile(r"\bayuda\b|\bhelp\b")
+# A command only matches when the whole message IS the command ("corregir",
+# "Corregir.", " CORREGIR "); never when a sentence merely contains it
+# ("quiero corregir algo", "necesito una ayuda", "el ok de la reunión").
+# Nothing here may use substring / `in` / `search` to decide a command.
+# ---------------------------------------------------------------------------
+
+# Trailing punctuation that never changes the meaning of a command.
+_TRAILING_PUNCTUATION = ".,;!?"
 
 
 def normalize_command(text: str) -> str:
-    """Lowercase, accent-free, trimmed, with inner whitespace collapsed."""
-    return " ".join(unidecode(text or "").lower().split())
+    """
+    The single normalization every command comparison goes through:
+    lower case, no accents, trimmed, inner whitespace collapsed to one space and
+    the trailing run of '. , ; ! ?' removed ("Corregir." == "corregir").
+    Inner punctuation is left alone.
+    """
+    collapsed = " ".join(unidecode(text or "").lower().split())
+    return collapsed.rstrip(_TRAILING_PUNCTUATION + " ")
+
+
+_CODE_ONLY_PATTERN = re.compile(r"\d{3,6}")
+_LISTA_PATTERN = re.compile(r"lista(?: (\d+))?")
+# Digits, optionally followed by a ')' ("1)"): for numbers and menu options only.
+_NUMBER_PATTERN = re.compile(r"(\d+)\s*\)?")
+_MENU_CHOICE_PATTERN = re.compile(r"([1-9])\s*\)?")
+# A known typo of "confirmar" (extra 'r'). Still a whole-message match.
+_CONFIRM_TYPO_PATTERN = re.compile(r"confir+mar")
+
+# Whole-message words, accent-free and lower case (so "sí" is "si").
+_VENTA_DIRECTA_WORDS = {"venta directa"}
+_RUTA_WORDS = {"ruta"}
+_OFICINA_WORDS = {"oficina"}
+_HELP_WORDS = {"ayuda", "help"}
+_CONFIRM_WORDS = {"confirmar", "confirma", "confirmo", "ok", "okey", "dale", "listo", "si"}
+_CORRECT_WORDS = {"corregir", "corrige", "corrijo", "cambiar", "cambia", "editar", "edito"}
+_CANCEL_WORDS = {"cancelar", "cancela", "cancelo", "descartar", "no", "nop", "salir", "salgo"}
 
 
 def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
@@ -111,35 +127,39 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
     Deterministic (non-AI) intent extraction for the planning flow.
     Returns {"type": ..., "codigo_erp": str | None, "raw": text}.
 
-    Evaluation order matters: "venta directa" (two words) is checked before
-    "ruta" (one word).
+    Every command matches only when the whole (normalized) message is that
+    command, so the order of the checks does not matter: no text can be two
+    commands at once.
     """
     raw = text or ""
     normalized = normalize_command(raw)
 
-    if _VENTA_DIRECTA_PATTERN.match(normalized):
+    if normalized in _VENTA_DIRECTA_WORDS:
         return {"type": "venta_directa", "codigo_erp": None, "raw": raw}
-    if _RUTA_PATTERN.match(normalized):
+    if normalized in _RUTA_WORDS:
         return {"type": "ruta", "codigo_erp": None, "raw": raw}
-    if _OFICINA_PATTERN.search(normalized):
+    if normalized in _OFICINA_WORDS:
         return {"type": "oficina", "codigo_erp": None, "raw": raw}
-    code_match = _CODE_ONLY_PATTERN.match(normalized)
-    if code_match:
-        return {"type": "code_only", "codigo_erp": code_match.group(1), "raw": raw}
-    if _HELP_PATTERN.search(normalized):
+    if _CODE_ONLY_PATTERN.fullmatch(normalized):
+        return {"type": "code_only", "codigo_erp": normalized, "raw": raw}
+    if normalized in _HELP_WORDS:
         return {"type": "help", "codigo_erp": None, "raw": raw}
-    if _CONFIRM_PATTERN.search(normalized) or _CONFIRM_SHORT_PATTERN.match(normalized):
+    if normalized in _CONFIRM_WORDS or _CONFIRM_TYPO_PATTERN.fullmatch(normalized):
         return {"type": "confirm", "codigo_erp": None, "raw": raw}
-    if _CORRECT_PATTERN.search(normalized):
+    if normalized in _CORRECT_WORDS:
         return {"type": "correct", "codigo_erp": None, "raw": raw}
-    if _CANCEL_PATTERN.search(normalized) or _CANCEL_SHORT_PATTERN.match(normalized):
+    if normalized in _CANCEL_WORDS:
         return {"type": "cancel", "codigo_erp": None, "raw": raw}
     return {"type": "unknown", "codigo_erp": None, "raw": raw}
 
 
-_LISTA_PATTERN = re.compile(r"^lista(?:\s+(\d+))?$")
-_NUMBER_PATTERN = re.compile(r"^(\d{1,6})\s*[.)]?$")
-_MENU_CHOICE_PATTERN = re.compile(r"^([1-9])\s*[.)]?$")
+def parse_number(text: str) -> Optional[str]:
+    """
+    The digits of a message that is just a number ("10", " 10. ", "10)"), else None.
+    Used wherever a bare number is expected (codes, list positions, selections).
+    """
+    match = _NUMBER_PATTERN.fullmatch(normalize_command(text))
+    return match.group(1) if match else None
 
 
 def extract_ruta_input(text: str) -> Dict[str, Any]:
@@ -152,19 +172,20 @@ def extract_ruta_input(text: str) -> Dict[str, Any]:
     if extract_planning_intent(text)["type"] == "cancel":
         return {"type": "cancel"}
     normalized = normalize_command(text)
-    lista = _LISTA_PATTERN.match(normalized)
+    lista = _LISTA_PATTERN.fullmatch(normalized)
     if lista:
         return {"type": "lista", "page": int(lista.group(1)) if lista.group(1) else 1}
-    number = _NUMBER_PATTERN.match(normalized)
-    if number:
-        return {"type": "number", "value": number.group(1)}
+    number = parse_number(text)
+    if number is not None and len(number) <= 6:
+        return {"type": "number", "value": number}
     return {"type": "invalid"}
 
 
 def parse_menu_choice(text: str) -> Optional[int]:
     """
     The option picked in a numbered menu, or None. ONLY an exact single digit
-    counts ("1", " 1 ", "1.", "1)"): "10" is a code, not option 1.
+    counts ("1", " 1 ", "1.", "1)"): "10" is a code and "1 de octubre" is a
+    sentence, neither is option 1.
     """
-    match = _MENU_CHOICE_PATTERN.match(normalize_command(text))
+    match = _MENU_CHOICE_PATTERN.fullmatch(normalize_command(text))
     return int(match.group(1)) if match else None

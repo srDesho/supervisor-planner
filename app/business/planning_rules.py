@@ -23,26 +23,22 @@ def _seller_name(raw: Any) -> str:
     return "" if name.upper() == "N/A" else name
 
 
-def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
+def build_plan_details(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
     """
-    Builds the standardized confirmation summary shown to the supervisor
-    before writing to PLANIFICACION_DIARIA, adapted to the modality:
+    The fields of a plan, formatted for its modality (no header, no question):
     - OFICINA / VENTA DIRECTA: minimal (no seller, route or zone to show).
     - RUTA: modality line + route + (optional) seller name, no ERP/zone.
-    - ACOMPAÑAMIENTO: the full summary.
+    - ACOMPAÑAMIENTO: the full list.
+    Shared by the confirmation summary and by "your current plan is...".
     """
     nombre_dia = _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()]
     modalidad = plan.get("modalidad")
     if modalidad in ("OFICINA", "VENTA DIRECTA"):
         return (
-            "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
             f"🏢 Modalidad: {modalidad}\n"
             f"📆 Fecha: {fecha_trabajo.strftime('%d/%m/%Y')} ({nombre_dia} - {weekday_code})\n"
             f"🏢 Sede: {plan.get('sede', 'N/A')}\n"
-            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}\n\n"
-            "¿Registrar?\n\n"
-            "✅ CONFIRMAR\n"
-            "❌ CORREGIR"
+            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}"
         )
     if modalidad == "RUTA":
         # Vendedor_Apoyo is empty for RUTA (see _build_route_plan), so no
@@ -50,20 +46,15 @@ def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dic
         seller = _seller_name(plan.get("vendedor_nombre"))
         seller_line = f"👤 {seller}\n" if seller else ""
         return (
-            "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
             "🚗 Modalidad: RUTA (cubres la ruta solo)\n"
             f"🗺️ Ruta: {plan.get('ruta_oficial', 'N/A')}\n"
             f"{seller_line}"
             f"🔑 Código ruta: {plan.get('codigo_ruta', 'N/A')}\n"
             f"📆 Fecha: {fecha_trabajo.strftime('%d/%m/%Y')} ({nombre_dia} - {weekday_code})\n\n"
             f"🏢 Sede: {plan.get('sede', 'N/A')}\n"
-            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}\n\n"
-            "¿Registrar?\n\n"
-            "✅ CONFIRMAR\n"
-            "❌ CORREGIR"
+            f"👤 Supervisor: {plan.get('supervisor', 'N/A')}"
         )
     return (
-        "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
         f"👤 Vendedor: {plan.get('vendedor_apoyo', 'N/A')}\n"
         f"🆔 ERP: {plan.get('codigo_erp_vendedor', 'N/A')}\n"
         f"🗺️ Ruta: {plan.get('ruta_oficial', 'N/A')}\n"
@@ -71,11 +62,45 @@ def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dic
         f"🔑 Código ruta: {plan.get('codigo_ruta', 'N/A')}\n"
         f"📆 Fecha: {fecha_trabajo.strftime('%d/%m/%Y')} ({nombre_dia} - {weekday_code})\n\n"
         f"🏢 Sede: {plan.get('sede', 'N/A')}\n"
-        f"👤 Supervisor: {plan.get('supervisor', 'N/A')}\n\n"
+        f"👤 Supervisor: {plan.get('supervisor', 'N/A')}"
+    )
+
+
+def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:
+    """
+    Builds the standardized confirmation summary shown to the supervisor
+    before writing to PLANIFICACION_DIARIA, adapted to the modality
+    (see build_plan_details).
+    """
+    return (
+        "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
+        f"{build_plan_details(fecha_trabajo, weekday_code, plan)}\n\n"
         "¿Registrar?\n\n"
         "✅ CONFIRMAR\n"
         "❌ CORREGIR"
     )
+
+
+def build_current_plan_message(
+    fecha_trabajo: date,
+    weekday_code: str,
+    saved_plan: Dict[str, Any],
+    can_cancel: bool = True
+) -> str:
+    """
+    Answer to CORREGIR when a plan is already saved: shows THAT plan (not the
+    pending draft) and asks for the replacement. `can_cancel` adds the
+    "CANCELAR" hint, which only makes sense while a draft is pending
+    (AWAITING_CONFIRMATION); with nothing pending (IDLE) there is nothing to cancel.
+    """
+    message = (
+        "📋 Tu planificación actual es:\n\n"
+        f"{build_plan_details(fecha_trabajo, weekday_code, saved_plan)}\n\n"
+        "✍️ Envía la nueva planificación para reemplazarla."
+    )
+    if can_cancel:
+        message += "\nO *CANCELAR* para dejarla como está."
+    return message
 
 
 def build_confirmation_summary_update(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:

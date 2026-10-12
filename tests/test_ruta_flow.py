@@ -761,3 +761,39 @@ async def test_ruta_lista_prints_seller_exactly_as_in_master(fake_sheets):
         "2. SC-DTS-RUTA-33 · N/A · 401",
         "3. SC-DTS-RUTA-34 · (sin vendedor) · 402",
     ]
+
+
+@pytest.mark.asyncio
+async def test_corregir_shows_the_saved_ruta_plan_with_the_sellers_name(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _list_service(fake_sheets, mock_wa)
+    await _say(svc, "RUTA", "LISTA", "3", "CONFIRMAR")          # saved: RUTA SC-DTS-RUTA-75
+    await _say(svc, "OFICINA")                                    # a different draft is pending
+
+    await svc.handle_message(_msg("corregir", message_id="z1"), eval_datetime=EVAL_DT)
+
+    text = mock_wa.sent_messages[-1]["text"]
+    assert text.startswith("📋 Tu planificación actual es:")
+    assert "🚗 Modalidad: RUTA (cubres la ruta solo)" in text
+    assert "🗺️ Ruta: SC-DTS-RUTA-75" in text
+    assert "👤 JEANNINE ARIANA CASTEDO VON BOECK" in text      # looked up in the masters by route code
+    assert "🔑 Código ruta: 226" in text
+    assert "OFICINA" not in text
+
+
+@pytest.mark.asyncio
+async def test_same_ruta_chosen_again_is_reported_as_already_active(fake_sheets):
+    mock_wa = WhatsAppClient()
+    svc = _list_service(fake_sheets, mock_wa)
+    await _say(svc, "RUTA", "5002", "CONFIRMAR")
+
+    await svc.handle_message(_msg("RUTA", message_id="y1"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("175", message_id="y2"), eval_datetime=EVAL_DT)  # by route code: SC-DTS-RUTA-24 / ERP "N/A"
+
+    # Picked by route code the plan differs from the one saved by seller code (ERP N/A vs 5002): replace notice.
+    assert mock_wa.sent_messages[-1]["text"].startswith("⚠️ Vas a reemplazar")
+
+    await svc.handle_message(_msg("CONFIRMAR", message_id="y3"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("RUTA", message_id="y4"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("175", message_id="y5"), eval_datetime=EVAL_DT)
+    assert mock_wa.sent_messages[-1]["text"] == "✅ Esa planificación ya está activa. No hay cambios."

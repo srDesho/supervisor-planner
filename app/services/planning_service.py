@@ -21,6 +21,7 @@ from app.business.planning_rules import (
     build_confirmation_summary,
     build_confirmation_summary_update,
     build_selection_prompt,
+    build_current_plan_message,
     build_route_list,
     route_list_pages
 )
@@ -36,7 +37,9 @@ from app.whatsapp.templates import (
     MSG_REGISTERED_OK,
     MSG_UPDATED_OK,
     MSG_AWAITING_CONFIRMATION_HELP,
-    MSG_CORRECT_REQUESTED,
+    MSG_NO_PLAN_CANCEL_HINT,
+    MSG_NO_PLAN_INFO,
+    MSG_PLAN_ALREADY_ACTIVE,
     MSG_CANCELLED_NO_CHANGES,
     MSG_SELECTION_INVALID,
     MSG_SELECTION_TOO_MANY_ERRORS,
@@ -50,7 +53,7 @@ from app.whatsapp.templates import (
 from app.whatsapp.client import WhatsAppClient
 from app.sheets.client import run_in_sheets_thread
 from app.sheets.masters import MastersService
-from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
+from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning, same_planning
 from app.services.supervisor_service import SupervisorService
 from app.services.conversation_service import ConversationService
 from app.services.audit_service import AuditService
@@ -130,6 +133,13 @@ class PlanningService:
             fecha_trabajo.strftime("%Y-%m-%d"),
             sede, supervisor_name
         )
+
+        # CORREGIR with nothing pending is an explicit request to look at the saved
+        # plan, so it is answered instead of falling into the silence rule below.
+        if step == "IDLE" and intent["type"] == "correct":
+            await self._handle_correct_in_idle(active, fecha_trabajo, chat_id)
+            return
+
         if is_real_planning(active) and step == "IDLE":
             if intent["type"] in ("unknown", "confirm", "correct"):
                 await run_in_sheets_thread(
@@ -439,6 +449,58 @@ class PlanningService:
             "supervisor": supervisor
         }
 
+    async def _handle_correct_in_idle(self, active: Optional[Dict[str, Any]], fecha_trabajo, chat_id: str) -> None:
+        """
+        CORREGIR with no pending draft: shows the saved plan (so the supervisor
+        can consult it before replacing it) or, if there is none, how to register
+        one. The state stays IDLE: no AWAITING_CONFIRMATION, nothing to cancel.
+        """
+        if is_real_planning(active):
+            saved_plan = await self._saved_plan_as_dict(active, fecha_trabajo.strftime("%Y-%m-%d"))
+            message = build_current_plan_message(
+                fecha_trabajo, get_weekday_code(fecha_trabajo), saved_plan, can_cancel=False
+            )
+        else:
+            message = MSG_NO_PLAN_INFO.format(fecha=fecha_trabajo.strftime("%d/%m/%Y"))
+        await self.whatsapp_client.send_message(chat_id, message)
+
+    @staticmethod
+    def _sheet_content(plan: Dict[str, Any]) -> Dict[str, Any]:
+        """The PLANIFICACION_DIARIA columns that define a plan's content (what same_planning compares)."""
+        return {
+            "Modalidad": plan["modalidad"],
+            "Vendedor_Apoyo": plan["vendedor_apoyo"],
+            "Codigo_ERP_Vendedor": plan["codigo_erp_vendedor"],
+            "Ruta_Oficial": plan["ruta_oficial"],
+            "Zona": plan["zona"],
+            "Codigo_Ruta": plan["codigo_ruta"],
+            "DIA": plan["dia"],
+        }
+
+    async def _saved_plan_as_dict(self, row: Dict[str, Any], fecha_trabajo: str) -> Dict[str, Any]:
+        """Turns a saved PLANIFICACION_DIARIA row back into the plan dict the summaries expect."""
+        plan = {
+            "modalidad": str(row.get("Modalidad", "")),
+            "vendedor_apoyo": str(row.get("Vendedor_Apoyo", "")),
+            "codigo_erp_vendedor": str(row.get("Codigo_ERP_Vendedor", "")),
+            "ruta_oficial": str(row.get("Ruta_Oficial", "")),
+            "zona": str(row.get("Zona", "")),
+            "codigo_ruta": str(row.get("Codigo_Ruta", "")),
+            "dia": str(row.get("DIA", "")),
+            "fecha_trabajo": fecha_trabajo,
+            "sede": str(row.get("Sede", "")),
+            "supervisor": str(row.get("Supervisor", "")),
+        }
+        if plan["modalidad"] == MODALIDAD_RUTA:
+            # The sheet row keeps no seller name for RUTA (Vendedor_Apoyo is empty):
+            # take it from the masters, by route code, for the summary only.
+            route = await run_in_sheets_thread(
+                self.masters_service.get_route_by_code,
+                plan["sede"], plan["zona"], plan["dia"], plan["codigo_ruta"]
+            )
+            plan["vendedor_nombre"] = str((route or {}).get("VENDEDOR", "") or "").strip()
+        return plan
+
     async def _propose_for_confirmation(
         self,
         plan: Dict[str, Any],
@@ -450,6 +512,14 @@ class PlanningService:
         supervisor_name: str
     ) -> None:
         active = await run_in_sheets_thread(self.sheets_repo.find_active, plan["fecha_trabajo"], sede, supervisor_name)
+
+        if same_planning(active, self._sheet_content(plan)):
+            # Same content as the saved plan: no confirmation, no "replace" warning.
+            # Any older pending draft is superseded by this (identical) request.
+            self.conversation_svc.clear(phone)
+            await self.whatsapp_client.send_message(chat_id, MSG_PLAN_ALREADY_ACTIVE)
+            return
+
         self.conversation_svc.set(phone, "AWAITING_CONFIRMATION", payload={"draft": plan})
 
         if is_real_planning(active):
@@ -475,17 +545,31 @@ class PlanningService:
         supervisor_name = supervisor["Nombre"]
 
         if intent["type"] == "confirm":
-            sheet_payload = {
-                "Modalidad": draft["modalidad"],
-                "Vendedor_Apoyo": draft["vendedor_apoyo"],
-                "Codigo_ERP_Vendedor": draft["codigo_erp_vendedor"],
-                "Ruta_Oficial": draft["ruta_oficial"],
-                "Zona": draft["zona"],
-                "Codigo_Ruta": draft["codigo_ruta"],
-                "DIA": draft["dia"],
-                "ID_Mensaje_WA": message_id
-            }
-            result = await run_in_sheets_thread(self.sheets_repo.upsert, draft["fecha_trabajo"], sede, supervisor_name, sheet_payload)
+            sheet_payload = {**self._sheet_content(draft), "ID_Mensaje_WA": message_id}
+            result = await run_in_sheets_thread(
+                self.sheets_repo.upsert,
+                draft["fecha_trabajo"], sede, supervisor_name, sheet_payload,
+                skip_if_unchanged=True
+            )
+
+            if result.get("__unchanged"):
+                # The saved plan already has exactly this content: nothing was written.
+                self.conversation_svc.clear(phone)
+                await self.whatsapp_client.send_message(chat_id, MSG_PLAN_ALREADY_ACTIVE)
+                await run_in_sheets_thread(
+                    self.audit_svc.log,
+                    phone=phone,
+                    whatsapp_id=chat_id,
+                    supervisor=supervisor_name,
+                    sede=sede,
+                    whatsapp_message_id=message_id,
+                    action="CONFIRM_PLANNING",
+                    state_after=result.get("Estado"),
+                    result="NO_CHANGES",
+                    details=f"Plan identico al activo; no se escribio en el Sheet (row id: {result.get('ID_Registro')})"
+                )
+                return
+
             is_mod = result.get("Es_Cambio") == "TRUE"
 
             self.conversation_svc.clear(phone)
@@ -507,11 +591,25 @@ class PlanningService:
             return
 
         if intent["type"] == "correct":
+            # Don't show the draft again (the supervisor just saw it): show what is
+            # SAVED, since that is what a new planning will replace.
             fecha_trabajo_date = datetime.strptime(draft["fecha_trabajo"], "%Y-%m-%d").date()
             weekday_code = get_weekday_code(fecha_trabajo_date)
-            summary = build_confirmation_summary(fecha_trabajo_date, weekday_code, draft)
-            await self.whatsapp_client.send_message(chat_id, f"{summary}\n\n{MSG_CORRECT_REQUESTED}")
-            # Keep AWAITING_CONFIRMATION with the same draft — nothing else to do.
+            active = await run_in_sheets_thread(
+                self.sheets_repo.find_active, draft["fecha_trabajo"], sede, supervisor_name
+            )
+            if is_real_planning(active):
+                saved_plan = await self._saved_plan_as_dict(active, draft["fecha_trabajo"])
+                message = build_current_plan_message(fecha_trabajo_date, weekday_code, saved_plan)
+            else:
+                # Same explanation as CORREGIR in IDLE, plus how to drop the pending draft.
+                message = (
+                    f"{MSG_NO_PLAN_INFO.format(fecha=fecha_trabajo_date.strftime('%d/%m/%Y'))}\n"
+                    f"{MSG_NO_PLAN_CANCEL_HINT}"
+                )
+            await self.whatsapp_client.send_message(chat_id, message)
+            # Keep AWAITING_CONFIRMATION with the same draft (the supervisor may
+            # still send CONFIRMAR) -- nothing else to do.
             return
 
         if intent["type"] == "cancel":

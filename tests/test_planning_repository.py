@@ -105,3 +105,38 @@ def test_read_active_index_matches_find_active_with_a_single_read(fake_sheets):
         expected = repo.find_active(*key)
         assert index[key]["ID_Registro"] == expected["ID_Registro"]
         assert index[key]["__row_index"] == expected["__row_index"]
+
+
+def test_upsert_skip_if_unchanged_writes_nothing_for_identical_content(fake_sheets):
+    repo = _repo(fake_sheets)
+    content = {"Modalidad": "OFICINA", "Vendedor_Apoyo": "N/A", "Codigo_ERP_Vendedor": "N/A",
+               "Ruta_Oficial": "N/A", "Zona": "N/A", "Codigo_Ruta": "N/A", "DIA": "N/A"}
+    first = repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", content)
+    before = fake_sheets.get_all_records("PLANIFICACION_DIARIA")
+
+    again = repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {**content, "ID_Mensaje_WA": "other"},
+                        skip_if_unchanged=True)
+
+    assert again["__unchanged"] is True
+    assert again["ID_Registro"] == first["ID_Registro"]
+    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == before   # not even Es_Cambio changed
+
+
+def test_upsert_skip_if_unchanged_still_updates_when_content_differs(fake_sheets):
+    repo = _repo(fake_sheets)
+    repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {"Modalidad": "OFICINA"})
+
+    result = repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {"Modalidad": "VENTA DIRECTA"},
+                         skip_if_unchanged=True)
+
+    assert "__unchanged" not in result
+    assert result["Es_Cambio"] == "TRUE" and result["Modalidad"] == "VENTA DIRECTA"
+
+
+def test_upsert_default_still_rewrites_identical_content(fake_sheets):
+    repo = _repo(fake_sheets)
+    repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {"Modalidad": "OFICINA"})
+
+    result = repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {"Modalidad": "OFICINA"})
+
+    assert result["Es_Cambio"] == "TRUE"   # unchanged behavior for callers that don't opt in

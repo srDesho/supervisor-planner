@@ -25,6 +25,30 @@ def is_real_planning(row: Optional[Dict[str, Any]]) -> bool:
     """True if `row` (from find_active) is an actual planning, not an escalation flag."""
     return row is not None and row.get("Estado") != ESCALATED_STATE
 
+
+# The columns that define WHAT a supervisor planned (everything else in the row
+# is bookkeeping: ids, timestamps, state, message id).
+PLANNING_CONTENT_FIELDS = (
+    "Modalidad", "Vendedor_Apoyo", "Codigo_ERP_Vendedor", "Ruta_Oficial",
+    "Zona", "Codigo_Ruta", "DIA",
+)
+
+
+def same_planning(active_row: Optional[Dict[str, Any]], content: Dict[str, Any]) -> bool:
+    """
+    True if the saved real planning `active_row` has exactly the same content as
+    `content` (keys: PLANNING_CONTENT_FIELDS). Values are compared as trimmed
+    text, because gspread turns numeric-looking cells (a seller code, a route
+    code) into numbers while a draft holds them as strings.
+    """
+    if not is_real_planning(active_row):
+        return False
+
+    def norm(value: Any) -> str:
+        return "" if value is None else str(value).strip()
+
+    return all(norm(active_row.get(f)) == norm(content.get(f)) for f in PLANNING_CONTENT_FIELDS)
+
 # Column order as defined in SPEC.md §30
 _COLUMNS = [
     "ID_Registro",
@@ -146,11 +170,22 @@ class GoogleSheetsPlanningRepository:
                 return result
         return None
 
-    def upsert(self, fecha_trabajo: str, sede: str, supervisor: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    def upsert(
+        self,
+        fecha_trabajo: str,
+        sede: str,
+        supervisor: str,
+        datos: Dict[str, Any],
+        skip_if_unchanged: bool = False
+    ) -> Dict[str, Any]:
         """
         Inserts a new planning row, or updates the existing active row for
         the same (fecha_trabajo, sede, supervisor) key. Never creates two
         active rows for the same key. Always reads fresh first.
+
+        With skip_if_unchanged=True, if the active row already has exactly this
+        content (same_planning) nothing is written: the active row is returned
+        with ``__unchanged`` set, using the same single read.
         """
         payload = dict(datos)
         payload["Fecha_Trabajo"] = fecha_trabajo
@@ -158,6 +193,10 @@ class GoogleSheetsPlanningRepository:
         payload["Supervisor"] = supervisor
 
         active = self.find_active(fecha_trabajo, sede, supervisor)
+        if skip_if_unchanged and same_planning(active, payload):
+            unchanged = dict(active)
+            unchanged["__unchanged"] = True
+            return unchanged
         if active:
             row_index = active["__row_index"]
             payload["ID_Registro"] = active.get("ID_Registro")

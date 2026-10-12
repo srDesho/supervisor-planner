@@ -51,7 +51,20 @@ MSG_AWAITING_CONFIRMATION_HELP = (
     "👉 Responde *CANCELAR* para descartarla."
 )
 
-MSG_CORRECT_REQUESTED = "✍️ Envía la planificación corregida:"
+MSG_NO_PLAN_INFO = (
+    "📋 No tienes una planificación registrada para el {fecha}.\n\n"
+    "Puedes registrarla con uno de estos comandos:\n"
+    "• el código de un vendedor (ej. 4287): acompañarlo\n"
+    "• ruta: cubrir una ruta tú solo\n"
+    "• venta directa\n"
+    "• oficina\n\n"
+    "Envía AYUDA para ver todos los comandos."
+)
+
+# Appended to MSG_NO_PLAN_INFO when a draft is pending (CORREGIR in AWAITING_CONFIRMATION).
+MSG_NO_PLAN_CANCEL_HINT = "O *CANCELAR* para descartar la planificación pendiente."
+
+MSG_PLAN_ALREADY_ACTIVE = "✅ Esa planificación ya está activa. No hay cambios."
 
 MSG_CANCELLED_NO_CHANGES = (
     "🗑️ Solicitud cancelada. No se realizó ningún cambio."
@@ -100,8 +113,7 @@ MSG_HELP = (
     "• ruta (cubrir una ruta tú solo: código del vendedor, código de ruta o LISTA)\n"
     "• venta directa\n"
     "• oficina\n"
-    "• AYUDA (este mensaje)\n\n"
-    "Horario: lunes a viernes de 15:00 a 18:00."
+    "• AYUDA (este mensaje)"
 )
 
 MSG_REMINDER_PENDING_SUBMISSION = (

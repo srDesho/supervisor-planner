@@ -49,6 +49,17 @@ class FakeGoogleSheetsClient:
         else:
             raise IndexError(f"No row at sheet index {row_index} in '{name}'")
 
+    def batch_update_cells(self, name: str, updates: List[Dict[str, Any]]) -> None:
+        """Mirror of GoogleSheetsClient.batch_update_cells for single-cell A1 ranges like 'F5'."""
+        if not updates:  # like the real client: nothing to write, no request
+            return
+        self.batch_calls = getattr(self, "batch_calls", 0) + 1
+        for update in updates:
+            a1 = update["range"]
+            col = ord(a1[0]) - ord("A")
+            row_index = int(a1[1:])
+            self._rows[name][row_index - 2][col] = update["values"][0][0]
+
     def worksheet_exists(self, name: str) -> bool:
         return name in self._headers
 
@@ -111,6 +122,10 @@ def pinned_schedule(monkeypatch):
         "WEEKDAY_PM_ESCALATION_TIME": "18:00",
         "SATURDAY_AM_WINDOW_START": "08:00",
         "SATURDAY_AM_LAST_REMINDER": "11:30",
+        "SHEETS_MAX_RETRIES": 3,
+        "SHEETS_RETRY_BASE_DELAY": 1.0,
+        "REMINDER_ACTIVITY_WINDOW_MINUTES": 10,
+        "DUPLICATE_MESSAGE_WINDOW_SECONDS": 2,
     }
     for name, value in pinned.items():
         monkeypatch.setattr(settings, name, value)
@@ -123,3 +138,10 @@ def pinned_schedule(monkeypatch):
     # Conversation state is process-wide; don't leak it between tests.
     from app.services.conversation_service import _STORE
     _STORE.clear()
+
+    # Per-process in-memory state of the message handler.
+    from app.core import locks
+    from app.whatsapp import handlers, idempotency
+    locks.reset()
+    idempotency.clear()
+    handlers.reset_duplicate_tracking()

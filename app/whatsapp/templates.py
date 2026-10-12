@@ -116,6 +116,15 @@ MSG_REMINDER_AWAITING_SELECTION = (
     "⚠️ Tienes una selección pendiente. Responde con el número de la ruta."
 )
 
+MSG_REMINDER_AWAITING_RUTA_CODE = (
+    "🚗 Estabas eligiendo la ruta que vas a cubrir. Envía el código del vendedor, "
+    "el código de la ruta o *LISTA*; o *CANCELAR* para salir."
+)
+
+MSG_PROCESSING_ERROR = (
+    "⚠️ Tuve un problema procesando tu mensaje. Intenta de nuevo en unos segundos."
+)
+
 
 def build_escalation_alert(
     fecha_trabajo: str,

@@ -9,7 +9,7 @@ same logical key (fecha_trabajo, sede, supervisor).
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from app.config import get_settings
 from .client import GoogleSheetsClient, GoogleSheetsError
@@ -95,6 +95,25 @@ class GoogleSheetsPlanningRepository:
                 result["__row_index"] = idx
                 return result
         return None
+
+    def read_active_index(self) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+        """
+        Reads PLANIFICACION_DIARIA ONCE and returns the active (non-CANCELADO)
+        rows keyed by (Fecha_Trabajo, Sede, Supervisor), so a reminder/escalation
+        cycle can answer "does X have a planning?" for every supervisor from
+        memory instead of re-reading the whole sheet per supervisor. Same
+        semantics as find_active: the first active row of each key wins.
+        """
+        index: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        for idx, row in enumerate(self.client.get_all_records(self.worksheet_name), start=2):
+            if row.get("Estado") == "CANCELADO":
+                continue
+            key = (row.get("Fecha_Trabajo"), row.get("Sede"), row.get("Supervisor"))
+            if key not in index:
+                entry = dict(row)
+                entry["__row_index"] = idx
+                index[key] = entry
+        return index
 
     def find_seller_duplicate(
         self,

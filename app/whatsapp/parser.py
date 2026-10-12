@@ -101,7 +101,7 @@ _CANCEL_SHORT_PATTERN = re.compile(r"^(?:no|nop|salir|salgo)\s*[.!]?$")
 _HELP_PATTERN = re.compile(r"\bayuda\b|\bhelp\b")
 
 
-def _normalize_command(text: str) -> str:
+def normalize_command(text: str) -> str:
     """Lowercase, accent-free, trimmed, with inner whitespace collapsed."""
     return " ".join(unidecode(text or "").lower().split())
 
@@ -115,7 +115,7 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
     "ruta" (one word).
     """
     raw = text or ""
-    normalized = _normalize_command(raw)
+    normalized = normalize_command(raw)
 
     if _VENTA_DIRECTA_PATTERN.match(normalized):
         return {"type": "venta_directa", "codigo_erp": None, "raw": raw}
@@ -150,7 +150,7 @@ def extract_ruta_input(text: str) -> Dict[str, Any]:
     """
     if extract_planning_intent(text)["type"] == "cancel":
         return {"type": "cancel"}
-    normalized = _normalize_command(text)
+    normalized = normalize_command(text)
     lista = _LISTA_PATTERN.match(normalized)
     if lista:
         return {"type": "lista", "page": int(lista.group(1)) if lista.group(1) else 1}

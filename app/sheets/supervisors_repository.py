@@ -91,6 +91,36 @@ class SupervisorsRepository:
         self._last_refresh = 0.0  # force refresh on next read
         return merged
 
+    def stamp_last_reminder_in_cache(self, phone: str, timestamp: str) -> None:
+        """
+        Records in the in-memory cache that `phone` was just reminded, so the
+        cooldown holds immediately, before the Sheet is written
+        (see update_last_reminders). No Sheets I/O.
+        """
+        target = normalize_phone(phone)
+        for row in self._cache:
+            if normalize_phone(str(row.get("Telefono", ""))) == target:
+                row["Ultimo_Recordatorio"] = timestamp
+
+    def update_last_reminders(self, timestamps: Dict[str, str]) -> int:
+        """
+        Persists Ultimo_Recordatorio for many supervisors with 1 read + 1 write
+        (instead of 2 reads + 1 write EACH): one fresh read to locate the rows,
+        then a single batch update that touches only that column. Returns how
+        many rows were written.
+        """
+        if not timestamps:
+            return 0
+        wanted = {normalize_phone(phone): ts for phone, ts in timestamps.items()}
+        column = chr(ord("A") + _COLUMNS.index("Ultimo_Recordatorio"))
+        updates = []
+        for row_index, row in enumerate(self.client.get_all_records(self.worksheet_name), start=2):  # header is row 1
+            key = normalize_phone(str(row.get("Telefono", "")))
+            if key in wanted:
+                updates.append({"range": f"{column}{row_index}", "values": [[wanted[key]]]})
+        self.client.batch_update_cells(self.worksheet_name, updates)
+        return len(updates)
+
     def update_last_reminder(self, phone: str, timestamp: str) -> Optional[Dict[str, Any]]:
         """Records the last reminder sent timestamp for the given phone."""
         return self.update_row_by_phone(phone, Ultimo_Recordatorio=timestamp)

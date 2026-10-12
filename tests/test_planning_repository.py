@@ -81,3 +81,27 @@ def test_find_active_excludes_cancelled_rows(fake_sheets):
 def test_find_active_returns_none_when_no_planning_exists(fake_sheets):
     repo = _repo(fake_sheets)
     assert repo.find_active("2026-09-18", "SCZ", "Nadie") is None
+
+
+def test_read_active_index_matches_find_active_with_a_single_read(fake_sheets):
+    repo = _repo(fake_sheets)
+    repo.upsert("2026-09-18", "SCZ", "Carlos Mendoza", {"Modalidad": "OFICINA"})
+    repo.upsert("2026-09-18", "SCZ", "Maria Suarez", {"Modalidad": "OFICINA"})
+    repo.cancel("2026-09-18", "SCZ", "Maria Suarez")
+    repo.mark_escalated("2026-09-18", "CBBA", "Juan Perez")
+
+    reads = []
+    original = fake_sheets.get_all_records
+    fake_sheets.get_all_records = lambda name: (reads.append(name), original(name))[1]
+
+    index = repo.read_active_index()
+
+    assert len(reads) == 1
+    assert set(index) == {
+        ("2026-09-18", "SCZ", "Carlos Mendoza"),   # active planning
+        ("2026-09-18", "CBBA", "Juan Perez"),       # escalation flag counts as an active row
+    }                                               # the cancelled one is excluded
+    for key in index:
+        expected = repo.find_active(*key)
+        assert index[key]["ID_Registro"] == expected["ID_Registro"]
+        assert index[key]["__row_index"] == expected["__row_index"]

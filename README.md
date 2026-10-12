@@ -80,6 +80,9 @@ Todas están documentadas en `.env.example`.
 | `TIMEZONE` | Zona horaria operativa | `America/La_Paz` |
 | `REMINDER_INTERVAL_MINUTES` | Cada cuántos minutos corre el ciclo de recordatorios (debe dividir 60) | `30` |
 | `REMINDER_COOLDOWN_MINUTES` | Mínimo entre dos recordatorios al mismo supervisor (producción: `60`; `1` para pruebas) | `60` |
+| `REMINDER_ACTIVITY_WINDOW_MINUTES` | No se envía recordatorio a quien escribió al bot en los últimos N minutos | `10` |
+| `DUPLICATE_MESSAGE_WINDOW_SECONDS` | El mismo texto del mismo teléfono en menos de N segundos se ignora (doble envío) | `2` |
+| `SHEETS_MAX_RETRIES` / `SHEETS_RETRY_BASE_DELAY` | Reintentos ante 429/5xx de Google Sheets y espera base en segundos (se duplica en cada intento) | `3` / `1` |
 | `MONDAY_AM_WINDOW_START` / `MONDAY_AM_ESCALATION_TIME` | Lunes AM: recordatorios para HOY desde la primera hora; desde la segunda, escalamiento | `08:00` / `12:00` |
 | `MONDAY_PM_WINDOW_START` / `MONDAY_PM_ESCALATION_TIME` | Lunes PM: recordatorios para MAÑANA; desde la segunda hora, escalamiento. La primera también es el corte lunes → martes de la fecha de trabajo | `15:00` / `18:00` |
 | `WEEKDAY_PM_WINDOW_START` / `WEEKDAY_PM_ESCALATION_TIME` | Martes a viernes: recordatorios para el día siguiente; desde la segunda hora, escalamiento | `15:00` / `18:00` |

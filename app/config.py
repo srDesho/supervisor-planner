@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     # between two reminders to the same supervisor.
     REMINDER_INTERVAL_MINUTES: int = 30
     REMINDER_COOLDOWN_MINUTES: int = 60
+    # A supervisor who wrote to the bot within this many minutes is in the
+    # middle of a conversation: no automatic reminder is sent to them.
+    REMINDER_ACTIVITY_WINDOW_MINUTES: int = 10
+    # The same text from the same phone within this many seconds is a
+    # double-send: the second one is ignored (see app/whatsapp/handlers.py).
+    DUPLICATE_MESSAGE_WINDOW_SECONDS: int = 2
+
+    # Retries of Google Sheets calls that fail with 429 (quota) or 5xx:
+    # SHEETS_MAX_RETRIES retries, waiting BASE, 2*BASE, 4*BASE... seconds.
+    SHEETS_MAX_RETRIES: int = 3
+    SHEETS_RETRY_BASE_DELAY: float = 1.0
 
     # Reminder schedule per day (America/La_Paz). Reminders target the next
     # work day (see app/business/dates.py) except Monday AM and Saturday AM,

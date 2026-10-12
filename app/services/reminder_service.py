@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from app.config import get_settings
 from app.business.dates import calculate_work_date, get_weekday_code, get_current_bolivia_datetime
+from app.core.locks import phone_lock, seconds_since_activity
 from app.utils.phone import normalize_phone
 from app.sheets.client import run_in_sheets_thread
 from app.sheets.planning_repository import GoogleSheetsPlanningRepository, is_real_planning
@@ -40,6 +41,7 @@ from app.whatsapp.templates import (
     MSG_REMINDER_PENDING_SUBMISSION,
     MSG_REMINDER_AWAITING_CONFIRMATION,
     MSG_REMINDER_AWAITING_SELECTION,
+    MSG_REMINDER_AWAITING_RUTA_CODE,
     build_escalation_alert
 )
 
@@ -112,22 +114,52 @@ class ReminderService:
             await self._run_escalation(now)
 
     async def _run_normal_reminders(self, now: datetime, ignore_cooldown: bool = False) -> None:
+        """
+        One reminder tick. Google Sheets cost of a tick, however many supervisors:
+        SUPERVISORES comes from its cache, PLANIFICACION_DIARIA is read ONCE,
+        and Ultimo_Recordatorio is written ONCE (one batch) -- and only if a
+        reminder was actually sent.
+        """
         fecha_trabajo = calculate_work_date(now)
         fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
         dia_trabajo = get_weekday_code(fecha_trabajo)
+        stamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
         sent = 0
         failed = 0
         skipped_registered = 0
         skipped_cooldown = 0
+        skipped_active = 0
 
-        for supervisor in await run_in_sheets_thread(self.supervisor_svc.get_all_active):
+        supervisors = await run_in_sheets_thread(self.supervisor_svc.get_all_active)
+
+        # 1) Cooldown first. It is decided from the (cached) SUPERVISORES rows,
+        #    so anyone reminded recently costs no read of PLANIFICACION_DIARIA.
+        candidates = []
+        for supervisor in supervisors:
+            if not ignore_cooldown and self._within_cooldown(supervisor, now):
+                skipped_cooldown += 1
+            else:
+                candidates.append(supervisor)
+
+        planning_index: Dict[Any, Any] = {}
+        if candidates:
+            # 2) ONE read of PLANIFICACION_DIARIA for the whole tick; every
+            #    "has this supervisor planned?" below is answered from memory.
             try:
-                if await run_in_sheets_thread(self._has_active_planning, fecha_trabajo_str, supervisor):
+                planning_index = await run_in_sheets_thread(self.sheets_repo.read_active_index)
+            except Exception as exc:
+                # Without it we cannot tell who already planned: remind nobody
+                # rather than nag people who did. The next tick retries.
+                logger.error(f"Reminder tick aborted, could not read PLANIFICACION_DIARIA: {exc}", exc_info=True)
+                return
+
+        reminded: Dict[str, str] = {}
+        for supervisor in candidates:
+            try:
+                key = (fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", ""))
+                if is_real_planning(planning_index.get(key)):
                     skipped_registered += 1
-                    continue
-                if not ignore_cooldown and self._within_cooldown(supervisor, now):
-                    skipped_cooldown += 1
                     continue
 
                 # Defensive: gspread may return numeric cells as int/float.
@@ -135,9 +167,18 @@ class ReminderService:
                 # client turns it into '<digits>@c.us' (591 prefix if 8 digits).
                 phone = str(supervisor.get("Telefono", "") or "")
 
-                msg = self._build_reminder_message(supervisor, fecha_trabajo, dia_trabajo)
-                await self.whatsapp_client.send_message(phone, msg)
-                await run_in_sheets_thread(self.supervisors_repo.update_last_reminder, phone, now.strftime("%Y-%m-%d %H:%M:%S"))
+                # Same per-phone lock as the message handler, so a reminder can
+                # never slip in between a question and the supervisor's answer.
+                async with phone_lock(normalize_phone(phone)):
+                    if self._recently_active(phone):
+                        skipped_active += 1
+                        continue
+                    msg = self._build_reminder_message(supervisor, fecha_trabajo, dia_trabajo)
+                    await self.whatsapp_client.send_message(phone, msg)
+                    # The cooldown must hold from now on; the Sheet is written in
+                    # one batch at the end of the tick. (Memory only, no Sheets I/O.)
+                    self.supervisors_repo.stamp_last_reminder_in_cache(phone, stamp)
+                    reminded[phone] = stamp
                 logger.info(f"Dispatched reminder to {supervisor.get('Nombre')} ({phone}).")
                 sent += 1
             except Exception as exc:
@@ -149,10 +190,29 @@ class ReminderService:
                 )
                 continue
 
+        if reminded:
+            try:
+                await run_in_sheets_thread(self.supervisors_repo.update_last_reminders, reminded)
+            except Exception as exc:
+                logger.error(
+                    f"Could not persist Ultimo_Recordatorio for {len(reminded)} supervisor(s): {exc}",
+                    exc_info=True,
+                )
+
         logger.info(
             f"Normal reminders for {fecha_trabajo_str} done: {sent} sent, {failed} failed, "
-            f"{skipped_registered} already registered, {skipped_cooldown} within cooldown."
+            f"{skipped_registered} already registered, {skipped_cooldown} within cooldown, "
+            f"{skipped_active} writing to the bot right now."
         )
+
+    def _recently_active(self, phone: str) -> bool:
+        """
+        True if this supervisor wrote to the bot within
+        REMINDER_ACTIVITY_WINDOW_MINUTES: they are in a live conversation (with
+        or without a pending state) and must not be interrupted.
+        """
+        seconds = seconds_since_activity(normalize_phone(phone))
+        return seconds is not None and seconds < self.settings.REMINDER_ACTIVITY_WINDOW_MINUTES * 60
 
     def _build_reminder_message(self, supervisor: Dict[str, Any], fecha_trabajo, dia_trabajo: str) -> str:
         conv_phone = normalize_phone(supervisor.get("Telefono", ""))
@@ -161,20 +221,11 @@ class ReminderService:
             return MSG_REMINDER_AWAITING_CONFIRMATION
         if entry and entry["state"] == "AWAITING_SELECTION":
             return MSG_REMINDER_AWAITING_SELECTION
+        if entry and entry["state"] == "AWAITING_RUTA_CODE":
+            return MSG_REMINDER_AWAITING_RUTA_CODE
         return MSG_REMINDER_PENDING_SUBMISSION.format(
             fecha=fecha_trabajo.strftime("%d/%m/%Y"), dia=dia_trabajo
         )
-
-    def _has_active_planning(self, fecha_trabajo_str: str, supervisor: Dict[str, Any]) -> bool:
-        """
-        True if the supervisor has a REAL planning for the date. A
-        PENDIENTE_ESCALADO flag row means "did not plan in time", so it does
-        not count: such a supervisor is still reminded.
-        """
-        row = self.sheets_repo.find_active(
-            fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")
-        )
-        return is_real_planning(row)
 
     def _within_cooldown(self, supervisor: Dict[str, Any], now: datetime) -> bool:
         last = self._parse_timestamp(supervisor.get("Ultimo_Recordatorio"))
@@ -196,8 +247,25 @@ class ReminderService:
         fecha_trabajo_str = fecha_trabajo.strftime("%Y-%m-%d")
         pendientes: List[Dict[str, Any]] = []
 
-        for supervisor in await run_in_sheets_thread(self.supervisor_svc.get_all_active):
+        supervisors = await run_in_sheets_thread(self.supervisor_svc.get_all_active)
+        if not supervisors:
+            return
+        # ONE read of PLANIFICACION_DIARIA per tick. Ticks keep coming after the
+        # cutoff until midnight, but once everyone has a row (a planning or an
+        # escalation flag) they cost just this single read and write nothing.
+        try:
+            planning_index = await run_in_sheets_thread(self.sheets_repo.read_active_index)
+        except Exception as exc:
+            logger.error(f"Escalation tick aborted, could not read PLANIFICACION_DIARIA: {exc}", exc_info=True)
+            return
+
+        for supervisor in supervisors:
+            key = (fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", ""))
+            if key in planning_index:
+                continue  # a real planning, or already escalated: nothing to do
             try:
+                # mark_escalated re-checks right before writing (it is the guard
+                # against a second process/instance creating the same flag row).
                 result = await run_in_sheets_thread(
                     self.sheets_repo.mark_escalated,
                     fecha_trabajo_str, supervisor.get("Sede", ""), supervisor.get("Nombre", "")

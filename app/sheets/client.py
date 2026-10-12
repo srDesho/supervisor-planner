@@ -6,6 +6,7 @@ Provides convenient high‑level methods used by MastersService.
 import asyncio
 import functools
 import logging
+import time
 from pathlib import Path
 from typing import Callable, List, Dict, Any, Optional, TypeVar
 
@@ -35,6 +36,23 @@ class GoogleSheetsError(RuntimeError):
 
 
 T = TypeVar("T")
+
+# Module-level so tests can replace it and not really wait.
+_sleep = time.sleep
+
+
+def _http_status(exc: APIError) -> Optional[int]:
+    """HTTP status of a gspread APIError (works across gspread 5.x/6.x)."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None:
+        status = getattr(exc, "code", None)
+    return status
+
+
+def _is_retryable(exc: APIError) -> bool:
+    """429 (quota exhausted) and 5xx are transient; 400/401/403/404 are permanent."""
+    status = _http_status(exc)
+    return status is not None and (status == 429 or status >= 500)
 
 
 async def run_in_sheets_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
@@ -73,6 +91,31 @@ class GoogleSheetsClient:
         self._worksheets: Dict[str, Worksheet] = {}
         self._initialize_client()
 
+    def _with_retry(self, op: str, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """
+        Calls a gspread operation, retrying transient failures (429 and 5xx)
+        up to SHEETS_MAX_RETRIES times with exponential backoff
+        (SHEETS_RETRY_BASE_DELAY, x2, x4...). Permanent errors (400, 401, 403,
+        404...) and the last failure propagate to the caller untouched.
+        Runs on the Sheets thread, so the waits only delay other Sheets calls.
+        NOTE: retrying a write after a 5xx can repeat it if the first attempt
+        actually went through; 429 is rejected before executing, so it is safe.
+        """
+        settings = get_settings()
+        max_retries = settings.SHEETS_MAX_RETRIES
+        for attempt in range(max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except APIError as exc:
+                if not _is_retryable(exc) or attempt >= max_retries:
+                    raise
+                delay = settings.SHEETS_RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Retry %d/%d for %s after %s, waiting %gs",
+                    attempt + 1, max_retries, op, _http_status(exc), delay,
+                )
+                _sleep(delay)
+
     def _initialize_client(self) -> None:
         cred_path = Path(self.credentials_path)
         if not cred_path.exists():
@@ -102,9 +145,12 @@ class GoogleSheetsClient:
         if cached is not None:
             return cached
         try:
-            ws = self._spreadsheet.worksheet(name)
+            ws = self._with_retry(f"worksheet({name})", self._spreadsheet.worksheet, name)
             self._worksheets[name] = ws
             return ws
+        except APIError as e:
+            logger.error("API error while opening worksheet '%s': %s", name, e)
+            raise GoogleSheetsError(str(e))
         except WorksheetNotFound as e:
             logger.error("Worksheet '%s' not found in spreadsheet %s", name, self.spreadsheet_id)
             raise GoogleSheetsError(str(e))
@@ -142,7 +188,7 @@ class GoogleSheetsClient:
     def get_all_records(self, name: str) -> List[Dict[str, Any]]:
         ws = self.get_worksheet(name)
         try:
-            records = ws.get_all_records()
+            records = self._with_retry(f"get_all_records({name})", ws.get_all_records)
             logger.debug("Fetched %d records from worksheet '%s'", len(records), name)
             return records
         except IndexError:
@@ -162,7 +208,7 @@ class GoogleSheetsClient:
     def append_row(self, name: str, row: List[Any]) -> None:
         ws = self.get_worksheet(name)
         try:
-            ws.append_row(row)
+            self._with_retry(f"append_row({name})", ws.append_row, row)
             logger.debug("Appended row to worksheet '%s': %s", name, row)
         except APIError as e:
             self._worksheets.pop(name, None)
@@ -173,11 +219,27 @@ class GoogleSheetsClient:
         ws = self.get_worksheet(name)
         try:
             cell_range = f"A{row_index}"
-            ws.update(cell_range, [row])
+            self._with_retry(f"update_row({name}, {row_index})", ws.update, cell_range, [row])
             logger.debug("Updated row %d in worksheet '%s' with %s", row_index, name, row)
         except APIError as e:
             self._worksheets.pop(name, None)
             logger.error("Failed to update row %d in worksheet '%s': %s", row_index, name, e)
+            raise GoogleSheetsError(str(e))
+
+    def batch_update_cells(self, name: str, updates: List[Dict[str, Any]]) -> None:
+        """
+        Writes several cells in ONE request. `updates` items look like
+        {"range": "F5", "values": [["2026-09-14 15:00:00"]]} (A1 notation).
+        """
+        if not updates:
+            return
+        ws = self.get_worksheet(name)
+        try:
+            self._with_retry(f"batch_update({name}, {len(updates)} ranges)", ws.batch_update, updates, value_input_option="RAW")
+            logger.debug("Batch-updated %d range(s) in worksheet '%s'", len(updates), name)
+        except APIError as e:
+            self._worksheets.pop(name, None)
+            logger.error("Failed to batch-update worksheet '%s': %s", name, e)
             raise GoogleSheetsError(str(e))
 
     def find_row_index(self, name: str, key_column: int, key_value: Any) -> Optional[int]:
@@ -186,7 +248,7 @@ class GoogleSheetsClient:
         """
         ws = self.get_worksheet(name)
         try:
-            cell = ws.find(str(key_value), in_column=key_column)
+            cell = self._with_retry(f"find({name})", ws.find, str(key_value), in_column=key_column)
             logger.debug("Found value '%s' in column %d at row %d (worksheet '%s')", key_value, key_column, cell.row, name)
             return cell.row
         except CellNotFound:

@@ -152,9 +152,9 @@ async def test_escalated_supervisor_can_plan_normally(fake_sheets):
     planning = _make_planning_service(fake_sheets, mock_wa)
     sat_am = _dt(19, 9, 0)
 
-    # Garbage text is not silenced as "already registered": the supervisor gets help.
+    # Garbage text is not silenced as "already registered": the supervisor gets the main menu.
     await planning.handle_message(_msg("hola", "m0"), eval_datetime=sat_am)
-    assert "Para registrar tu planificación" in mock_wa.sent_messages[-1]["text"]
+    assert "¿Qué quieres registrar para el sábado 19/09?" in mock_wa.sent_messages[-1]["text"]
 
     await planning.handle_message(_msg("oficina", "m1"), eval_datetime=sat_am)
     summary = mock_wa.sent_messages[-1]["text"]

@@ -152,9 +152,10 @@ def test_oficina_summary_is_minimal():
         "📆 Fecha: 17/09/2026 (Jueves - 4-JU)\n"
         "🏢 Sede: SCZ\n"
         "👤 Supervisor: Carlos Mendoza\n\n"
-        "¿Registrar?\n\n"
-        "✅ CONFIRMAR\n"
-        "❌ CORREGIR"
+        "1️⃣ Confirmar\n"
+        "2️⃣ Corregir\n"
+        "3️⃣ Cancelar\n\n"
+        "Responde con el número."
     )
 
 
@@ -188,9 +189,10 @@ def test_ruta_summary_with_seller():
         "📆 Fecha: 17/09/2026 (Jueves - 4-JU)\n\n"
         "🏢 Sede: SCZ\n"
         "👤 Supervisor: Carlos Mendoza\n\n"
-        "¿Registrar?\n\n"
-        "✅ CONFIRMAR\n"
-        "❌ CORREGIR"
+        "1️⃣ Confirmar\n"
+        "2️⃣ Corregir\n"
+        "3️⃣ Cancelar\n\n"
+        "Responde con el número."
     )
 
 
@@ -230,7 +232,6 @@ async def test_replacing_an_existing_planning_shows_replace_notice(fake_sheets):
 
 from app.whatsapp.templates import (  # noqa: E402
     MSG_CANCELLED_NO_CHANGES,
-    MSG_NO_PLAN_CANCEL_HINT,
     MSG_PLAN_ALREADY_ACTIVE,
     MSG_REGISTERED_OK,
     MSG_UPDATED_OK,
@@ -257,48 +258,6 @@ def _write_counter(fake_sheets):
 
         setattr(fake_sheets, name, wrapped)
     return counter
-
-
-@pytest.mark.asyncio
-async def test_corregir_with_saved_plan_shows_the_saved_plan_not_the_draft(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-    await _say(svc, "oficina", "confirmar")                 # saved plan: OFICINA
-    await _say(svc, "venta directa", start=3)               # pending draft: VENTA DIRECTA
-
-    await _say(svc, "corregir", start=4)
-
-    text = mock_wa.sent_messages[-1]["text"]
-    assert text.startswith("📋 Tu planificación actual es:")
-    assert "🏢 Modalidad: OFICINA" in text                  # the saved one...
-    assert "VENTA DIRECTA" not in text                      # ...not the draft
-    assert "CONFIRMA TU PLANIFICACIÓN" not in text and "¿Registrar?" not in text
-    assert "✍️ Envía la nueva planificación para reemplazarla." in text
-    assert "CANCELAR* para dejarla como está." in text
-
-    entry = svc.conversation_svc.get("70000001")
-    assert entry["state"] == "AWAITING_CONFIRMATION"
-    assert entry["payload"]["draft"]["modalidad"] == "VENTA DIRECTA"  # draft untouched
-
-    await _say(svc, "confirmar", start=5)                   # the draft can still be confirmed
-    assert mock_wa.sent_messages[-1]["text"] == MSG_UPDATED_OK
-    assert fake_sheets.get_all_records("PLANIFICACION_DIARIA")[0]["Modalidad"] == "VENTA DIRECTA"
-
-
-@pytest.mark.asyncio
-async def test_corregir_without_saved_plan_says_there_is_none(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-    await _say(svc, "oficina")
-
-    await _say(svc, "corregir", start=2)
-
-    text = mock_wa.sent_messages[-1]["text"]
-    assert text == f"{MSG_NO_PLAN_INFO.format(fecha='17/09/2026')}\n{MSG_NO_PLAN_CANCEL_HINT}"
-    assert text.startswith("📋 No tienes una planificación registrada para el 17/09/2026.")
-    assert text.endswith("O *CANCELAR* para descartar la planificación pendiente.")
-    assert "CONFIRMA TU PLANIFICACIÓN" not in text and "Modalidad" not in text   # the draft is not shown again
-    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
 
 
 @pytest.mark.asyncio
@@ -455,56 +414,6 @@ from app.whatsapp.templates import MSG_NO_PLAN_INFO  # noqa: E402
 
 
 @pytest.mark.asyncio
-async def test_idle_corregir_with_saved_plan_shows_it_and_stays_idle(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-    await _say(svc, "oficina", "confirmar")                 # saved; conversation back to IDLE
-    assert svc.conversation_svc.get("70000001") is None
-    count = len(mock_wa.sent_messages)
-
-    await _say(svc, "corregir", start=3)
-
-    assert len(mock_wa.sent_messages) == count + 1
-    assert mock_wa.sent_messages[-1]["text"] == (
-        "📋 Tu planificación actual es:\n\n"
-        "🏢 Modalidad: OFICINA\n"
-        "📆 Fecha: 17/09/2026 (Jueves - 4-JU)\n"
-        "🏢 Sede: SCZ\n"
-        "👤 Supervisor: Carlos Mendoza\n\n"
-        "✍️ Envía la nueva planificación para reemplazarla."
-    )
-    assert "CANCELAR" not in mock_wa.sent_messages[-1]["text"]   # nothing pending to cancel
-    assert svc.conversation_svc.get("70000001") is None          # still IDLE
-    assert len(fake_sheets.get_all_records("PLANIFICACION_DIARIA")) == 1  # nothing written
-
-
-@pytest.mark.asyncio
-async def test_idle_corregir_without_plan_explains_how_to_register(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-
-    await _say(svc, "corregir")
-
-    assert mock_wa.sent_messages[-1]["text"] == MSG_NO_PLAN_INFO.format(fecha="17/09/2026")
-    text = mock_wa.sent_messages[-1]["text"]
-    assert text.startswith("📋 No tienes una planificación registrada para el 17/09/2026.")
-    for command in ("código de un vendedor", "ruta", "venta directa", "oficina", "AYUDA"):
-        assert command in text
-    assert svc.conversation_svc.get("70000001") is None
-
-
-@pytest.mark.asyncio
-async def test_idle_corregir_treats_an_escalation_flag_as_no_plan(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-    svc.sheets_repo.mark_escalated("2026-09-17", "SCZ", "Carlos Mendoza")
-
-    await _say(svc, "corregir")
-
-    assert mock_wa.sent_messages[-1]["text"] == MSG_NO_PLAN_INFO.format(fecha="17/09/2026")
-
-
-@pytest.mark.asyncio
 async def test_new_command_after_idle_corregir_works_normally(fake_sheets):
     mock_wa = WhatsAppClient()
     svc = _make_service(fake_sheets, mock_wa)
@@ -530,21 +439,6 @@ async def test_idle_corregir_without_plan_then_register_works(fake_sheets):
     await _say(svc, "oficina", "confirmar", start=2)
 
     assert mock_wa.sent_messages[-1]["text"] == MSG_REGISTERED_OK
-
-
-@pytest.mark.asyncio
-async def test_awaiting_confirmation_corregir_is_unchanged(fake_sheets):
-    mock_wa = WhatsAppClient()
-    svc = _make_service(fake_sheets, mock_wa)
-    await _say(svc, "oficina", "confirmar", "venta directa", "corregir")
-
-    text = mock_wa.sent_messages[-1]["text"]
-    assert text.startswith("📋 Tu planificación actual es:")
-    assert "O *CANCELAR* para dejarla como está." in text   # the hint IS there while a draft is pending
-    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
-
-    await _say(svc, "cancelar", "corregir", start=5)         # back to IDLE: now the IDLE answer
-    assert "CANCELAR" not in mock_wa.sent_messages[-1]["text"]
 
 
 @pytest.mark.asyncio

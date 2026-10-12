@@ -75,32 +75,27 @@ def build_confirmation_summary(fecha_trabajo: date, weekday_code: str, plan: Dic
     return (
         "📋 *CONFIRMA TU PLANIFICACIÓN*\n\n"
         f"{build_plan_details(fecha_trabajo, weekday_code, plan)}\n\n"
-        "¿Registrar?\n\n"
-        "✅ CONFIRMAR\n"
-        "❌ CORREGIR"
+        "1️⃣ Confirmar\n"
+        "2️⃣ Corregir\n"
+        "3️⃣ Cancelar\n\n"
+        "Responde con el número."
     )
 
 
-def build_current_plan_message(
-    fecha_trabajo: date,
-    weekday_code: str,
-    saved_plan: Dict[str, Any],
-    can_cancel: bool = True
-) -> str:
+def build_current_plan_message(fecha_trabajo: date, weekday_code: str, saved_plan: Dict[str, Any]) -> str:
     """
-    Answer to CORREGIR when a plan is already saved: shows THAT plan (not the
-    pending draft) and asks for the replacement. `can_cancel` adds the
-    "CANCELAR" hint, which only makes sense while a draft is pending
-    (AWAITING_CONFIRMATION); with nothing pending (IDLE) there is nothing to cancel.
+    First part of the answer to CORREGIR when a plan is saved: shows THAT plan
+    (not the pending draft). The main menu is appended by the caller.
     """
-    message = (
+    return (
         "📋 Tu planificación actual es:\n\n"
-        f"{build_plan_details(fecha_trabajo, weekday_code, saved_plan)}\n\n"
-        "✍️ Envía la nueva planificación para reemplazarla."
+        f"{build_plan_details(fecha_trabajo, weekday_code, saved_plan)}"
     )
-    if can_cancel:
-        message += "\nO *CANCELAR* para dejarla como está."
-    return message
+
+
+def weekday_name_es(fecha_trabajo: date) -> str:
+    """Lower-case Spanish weekday name ('martes'), for sentences like 'para el martes 15/09'."""
+    return _WEEKDAY_NAMES_ES[fecha_trabajo.weekday()].lower()
 
 
 def build_confirmation_summary_update(fecha_trabajo: date, weekday_code: str, plan: Dict[str, Any]) -> str:

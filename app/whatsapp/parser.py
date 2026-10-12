@@ -138,7 +138,8 @@ def extract_planning_intent(text: str) -> Dict[str, Optional[str]]:
 
 
 _LISTA_PATTERN = re.compile(r"^lista(?:\s+(\d+))?$")
-_NUMBER_PATTERN = re.compile(r"^\d{1,6}$")
+_NUMBER_PATTERN = re.compile(r"^(\d{1,6})\s*[.)]?$")
+_MENU_CHOICE_PATTERN = re.compile(r"^([1-9])\s*[.)]?$")
 
 
 def extract_ruta_input(text: str) -> Dict[str, Any]:
@@ -154,6 +155,16 @@ def extract_ruta_input(text: str) -> Dict[str, Any]:
     lista = _LISTA_PATTERN.match(normalized)
     if lista:
         return {"type": "lista", "page": int(lista.group(1)) if lista.group(1) else 1}
-    if _NUMBER_PATTERN.match(normalized):
-        return {"type": "number", "value": normalized}
+    number = _NUMBER_PATTERN.match(normalized)
+    if number:
+        return {"type": "number", "value": number.group(1)}
     return {"type": "invalid"}
+
+
+def parse_menu_choice(text: str) -> Optional[int]:
+    """
+    The option picked in a numbered menu, or None. ONLY an exact single digit
+    counts ("1", " 1 ", "1.", "1)"): "10" is a code, not option 1.
+    """
+    match = _MENU_CHOICE_PATTERN.match(normalize_command(text))
+    return int(match.group(1)) if match else None

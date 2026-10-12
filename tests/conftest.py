@@ -125,6 +125,8 @@ def pinned_schedule(monkeypatch):
         "SHEETS_MAX_RETRIES": 3,
         "SHEETS_RETRY_BASE_DELAY": 1.0,
         "REMINDER_ACTIVITY_WINDOW_MINUTES": 10,
+        "REMINDER_MENU_TTL_MINUTES": 120,
+        "CONVERSATION_TTL_MINUTES": 30,
         "DUPLICATE_MESSAGE_WINDOW_SECONDS": 2,
     }
     for name, value in pinned.items():

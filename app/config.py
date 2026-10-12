@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # The same text from the same phone within this many seconds is a
     # double-send: the second one is ignored (see app/whatsapp/handlers.py).
     DUPLICATE_MESSAGE_WINDOW_SECONDS: int = 2
+    # An automatic reminder leaves the supervisor at the main menu (numbered
+    # options); that state lasts this long so a late answer still works.
+    REMINDER_MENU_TTL_MINUTES: int = 120
 
     # Retries of Google Sheets calls that fail with 429 (quota) or 5xx:
     # SHEETS_MAX_RETRIES retries, waiting BASE, 2*BASE, 4*BASE... seconds.

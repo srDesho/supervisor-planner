@@ -19,9 +19,8 @@ from app.services.supervisor_service import SupervisorService
 from app.services.audit_service import AuditService
 from app.services.conversation_service import ConversationService, _STORE
 from app.whatsapp.templates import (
-    MSG_HELP,
-    MSG_RUTA_ASK_CODE,
-    MSG_RUTA_CODE_INVALID,
+    MSG_MAIN_MENU,
+    MSG_RUTA_MENU,
     MSG_CANCELLED_NO_CHANGES,
     MSG_RUTA_CODE_NOT_FOUND,
     MSG_RUTA_LIST_OUT_OF_RANGE,
@@ -34,6 +33,8 @@ from app.whatsapp.templates import (
 
 # Miércoles 16:00 -> fecha operativa Jueves (4-JU)
 EVAL_DT = datetime(2026, 9, 16, 16, 0, tzinfo=BOLIVIA_TZ)
+
+MAIN_MENU = MSG_MAIN_MENU.format(dia="jueves", fecha="17/09")
 
 SUPERVISORS = [
     {"Nombre": "Carlos Mendoza", "Telefono": "70000001", "Sede": "SCZ", "Zona": "N", "Activo": "TRUE", "Ultimo_Recordatorio": ""},
@@ -133,7 +134,7 @@ async def test_registro_is_just_an_unknown_message_for_authenticated_supervisor(
 
     await svc.handle_message(_msg("REGISTRO"), eval_datetime=EVAL_DT)
 
-    assert [m["text"] for m in mock_wa.sent_messages] == [MSG_HELP]
+    assert [m["text"] for m in mock_wa.sent_messages] == [MAIN_MENU]
     assert all(r["accion"] != "SELF_REGISTER" for r in fake_sheets.get_all_records("LOG_BOT"))
 
 
@@ -157,7 +158,7 @@ async def test_ruta_asks_for_code_and_enters_awaiting_state(fake_sheets):
 
     await svc.handle_message(_msg("RUTA"), eval_datetime=EVAL_DT)
 
-    assert [m["text"] for m in mock_wa.sent_messages] == [MSG_RUTA_ASK_CODE]
+    assert [m["text"] for m in mock_wa.sent_messages] == [MSG_RUTA_MENU]
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_RUTA_CODE"
 
 
@@ -237,9 +238,9 @@ async def test_ruta_invalid_input_keeps_state(fake_sheets):
     svc = _make_service(fake_sheets, mock_wa)
 
     await svc.handle_message(_msg("RUTA"), eval_datetime=EVAL_DT)
-    await svc.handle_message(_msg("oficina", message_id="m2"), eval_datetime=EVAL_DT)
+    await svc.handle_message(_msg("banana", message_id="m2"), eval_datetime=EVAL_DT)
 
-    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_CODE_INVALID
+    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_MENU
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_RUTA_CODE"
 
 
@@ -308,7 +309,7 @@ async def test_new_ruta_while_awaiting_confirmation_restarts_flow(fake_sheets):
     await svc.handle_message(_msg("OFICINA"), eval_datetime=EVAL_DT)
     await svc.handle_message(_msg("RUTA", message_id="m2"), eval_datetime=EVAL_DT)
 
-    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_ASK_CODE
+    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_MENU
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_RUTA_CODE"
 
 
@@ -357,7 +358,7 @@ async def test_sentences_do_not_cancel_or_confirm_a_pending_plan(fake_sheets, bo
 
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
     assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
-    assert "pendiente de confirmación" in mock_wa.sent_messages[-1]["text"]
+    assert "CONFIRMA TU PLANIFICACIÓN" in mock_wa.sent_messages[-1]["text"]  # the summary is repeated
 
 
 @pytest.mark.asyncio
@@ -419,7 +420,7 @@ async def test_short_word_inside_a_sentence_leaves_pending_plan_untouched(fake_s
 
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_CONFIRMATION"
     assert fake_sheets.get_all_records("PLANIFICACION_DIARIA") == []
-    assert "pendiente de confirmación" in mock_wa.sent_messages[-1]["text"]
+    assert "CONFIRMA TU PLANIFICACIÓN" in mock_wa.sent_messages[-1]["text"]  # the summary is repeated
 
 
 # --- RUTA: LISTA, route code, seller-vs-route priority ---
@@ -489,8 +490,8 @@ async def test_ruta_asks_for_vendor_route_or_lista(fake_sheets):
     await _say(svc, "RUTA")
 
     text = mock_wa.sent_messages[-1]["text"]
-    assert text == MSG_RUTA_ASK_CODE
-    assert "LISTA" in text and "código del vendedor" in text and "código de la ruta" in text
+    assert text == MSG_RUTA_MENU
+    assert "Por código de vendedor" in text and "Por código de ruta" in text and "Ver las rutas" in text
 
 
 @pytest.mark.asyncio
@@ -662,8 +663,8 @@ async def test_ruta_invalid_input_message(fake_sheets):
 
     await _say(svc, "RUTA", "quiero la ruta norte")
 
-    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_CODE_INVALID
-    assert "LISTA" in MSG_RUTA_CODE_INVALID and "CANCELAR" in MSG_RUTA_CODE_INVALID
+    assert mock_wa.sent_messages[-1]["text"] == MSG_RUTA_MENU
+    assert "CANCELAR" in MSG_RUTA_MENU and "Responde con el número" in MSG_RUTA_MENU
     assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_RUTA_CODE"
 
 
@@ -714,8 +715,8 @@ async def test_lista_outside_ruta_flow_is_not_a_command(fake_sheets):
 
     await _say(svc, "LISTA")
 
-    assert mock_wa.sent_messages[-1]["text"] == MSG_HELP
-    assert svc.conversation_svc.get("70000001") is None
+    assert mock_wa.sent_messages[-1]["text"] == MAIN_MENU
+    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_MAIN_MENU"
 
 
 @pytest.mark.asyncio
@@ -725,8 +726,8 @@ async def test_old_venta_command_no_longer_starts_a_flow(fake_sheets):
 
     await _say(svc, "VENTA")
 
-    assert mock_wa.sent_messages[-1]["text"] == MSG_HELP
-    assert svc.conversation_svc.get("70000001") is None
+    assert mock_wa.sent_messages[-1]["text"] == MAIN_MENU
+    assert svc.conversation_svc.get("70000001")["state"] == "AWAITING_MAIN_MENU"
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,10 @@ Bot de WhatsApp para automatizar la recepción, validación, confirmación y con
 
 ## Comandos del bot
 
+> Guía completa para supervisores y analistas: [docs/manual-de-usuario.html](docs/manual-de-usuario.html) (también en [PDF](docs/manual-de-usuario.pdf) y [Markdown](docs/manual-de-usuario.md)).
+
+Todo se puede hacer con palabras o respondiendo con el número del menú que muestra el bot (1️⃣ Acompañar, 2️⃣ Ruta, 3️⃣ Venta directa, 4️⃣ Oficina; y 1️⃣ Confirmar, 2️⃣ Corregir, 3️⃣ Cancelar). Los números solo valen mientras el menú que los ofreció es lo último que dijo el bot.
+
 El administrador pre-carga a los supervisores en la hoja `SUPERVISORES`; quien no esté ahí (o tenga `Activo` distinto de `TRUE`) no recibe respuesta.
 
 | Mensaje | Qué hace |
@@ -13,7 +17,7 @@ El administrador pre-carga a los supervisores en la hoja `SUPERVISORES`; quien n
 | `VENTA DIRECTA` | Venta directa, sin vendedor ni ruta |
 | `OFICINA` | Día en oficina |
 | `CONFIRMAR` / `CORREGIR` / `CANCELAR` | Responder al resumen pendiente |
-| `AYUDA` | Muestra los comandos |
+| `AYUDA` | Abre el menú principal (dentro de un flujo, repite el paso actual) |
 
 ## Stack
 
@@ -152,6 +156,7 @@ Los tests usan una hoja de cálculo simulada en memoria y no envían mensajes a 
 │   ├── sheets/             # Cliente de Google Sheets y repositorios
 │   ├── services/           # Planificación, supervisores, conversación, recordatorios, auditoría, scheduler
 │   └── utils/              # Normalización de teléfonos
+├── docs/                   # Manual de uso (HTML, PDF y Markdown) para supervisores y analistas
 ├── tests/                  # Suite pytest
 ├── scripts/                # Utilidades de verificación manual
 ├── Dockerfile

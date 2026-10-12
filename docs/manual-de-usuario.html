@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supervisor Planner — Manual de uso</title>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --text: #1d2733;
+    --muted: #5b6b7c;
+    --line: #dfe5ec;
+    --brand: #0b5c8a;
+    --brand-soft: #e4f0f7;
+    --ok: #1d7a4b;
+    --ok-soft: #e3f4ea;
+    --warn: #9a5b00;
+    --warn-soft: #fff1d6;
+    --bad: #a3262a;
+    --bad-soft: #fde8e8;
+    --code-bg: #eef2f6;
+    --bubble-bot: #ffffff;
+    --bubble-you: #d9fdd3;
+    --chat-bg: #efe9df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11171d;
+      --surface: #19222b;
+      --text: #e6ecf2;
+      --muted: #9fb0c0;
+      --line: #2b3946;
+      --brand: #6cc0ec;
+      --brand-soft: #16303f;
+      --ok: #5fd193;
+      --ok-soft: #14301f;
+      --warn: #f0b955;
+      --warn-soft: #3a2c0f;
+      --bad: #f08a8d;
+      --bad-soft: #3a1618;
+      --code-bg: #232f3a;
+      --bubble-bot: #202c33;
+      --bubble-you: #005c4b;
+      --chat-bg: #0b141a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 1rem; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  a { color: var(--brand); }
+  code, kbd {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- header ---------- */
+  .hero {
+    background: linear-gradient(135deg, #0b3d5c, #0b5c8a);
+    color: #fff;
+    padding: 2.5rem 1rem 2rem;
+  }
+  .hero-inner { max-width: 1100px; margin: 0 auto; }
+  .hero h1 { margin: 0 0 .3rem; font-size: 2rem; line-height: 1.2; }
+  .hero p { margin: 0 0 1.2rem; opacity: .9; max-width: 60ch; }
+  .hero .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+  .btn {
+    display: inline-block;
+    padding: .55rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.5);
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    text-decoration: none;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn:hover { background: rgba(255,255,255,.25); }
+  .meta { margin-top: 1rem; font-size: .85rem; opacity: .75; }
+
+  /* ---------- layout ---------- */
+  .layout {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 4rem;
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+  .toc {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1rem;
+    font-size: .9rem;
+  }
+  .toc h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .4rem; }
+  .toc ol, .toc ul { list-style: none; margin: 0 0 1rem; padding: 0; }
+  .toc li { margin: .15rem 0; }
+  .toc a { text-decoration: none; color: var(--text); display: block; padding: .15rem .4rem; border-radius: 5px; }
+  .toc a:hover { background: var(--brand-soft); color: var(--brand); }
+  .toc .part { font-weight: 700; color: var(--brand); }
+
+  main { min-width: 0; }
+  main section.part-block { margin-bottom: 3rem; }
+  .part-title {
+    font-size: 1.6rem;
+    margin: 0 0 1.2rem;
+    padding-bottom: .5rem;
+    border-bottom: 3px solid var(--brand);
+    color: var(--brand);
+  }
+  main h3 { font-size: 1.25rem; margin: 2.2rem 0 .6rem; }
+  main h4 { font-size: 1.05rem; margin: 1.5rem 0 .4rem; color: var(--brand); }
+  main p { margin: .6rem 0; }
+  main ul, main ol { padding-left: 1.4rem; }
+  main li { margin: .25rem 0; }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  th, td { text-align: left; padding: .6rem .8rem; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th { background: var(--brand-soft); color: var(--brand); font-weight: 700; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+
+  /* ---------- callouts ---------- */
+  .note, .warn, .tip {
+    margin: 1.1rem 0;
+    padding: .8rem 1rem;
+    border-radius: 8px;
+    border-left: 5px solid;
+  }
+  .note { background: var(--brand-soft); border-color: var(--brand); }
+  .tip  { background: var(--ok-soft);   border-color: var(--ok); }
+  .warn { background: var(--warn-soft); border-color: var(--warn); }
+  .note > :first-child, .tip > :first-child, .warn > :first-child { margin-top: 0; }
+  .note > :last-child, .tip > :last-child, .warn > :last-child { margin-bottom: 0; }
+  .callout-title { font-weight: 700; display: block; margin-bottom: .2rem; }
+
+  /* ---------- WhatsApp-style examples ---------- */
+  .chat {
+    background: var(--chat-bg);
+    border-radius: 12px;
+    padding: .9rem;
+    margin: 1rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: .45rem;
+    max-width: 520px;
+  }
+  .chat .cap { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: .1rem; }
+  .msg {
+    padding: .5rem .7rem;
+    border-radius: 10px;
+    max-width: 92%;
+    white-space: pre-line;
+    font-size: .93rem;
+    line-height: 1.45;
+    box-shadow: 0 1px 1px rgba(0,0,0,.12);
+    color: var(--text);
+  }
+  .msg.bot { background: var(--bubble-bot); align-self: flex-start; border-top-left-radius: 2px; }
+  .msg.you { background: var(--bubble-you); align-self: flex-end; border-top-right-radius: 2px; }
+  .msg .who { display: block; font-size: .7rem; font-weight: 700; color: var(--brand); margin-bottom: .1rem; }
+  .msg.you .who { color: var(--ok); text-align: right; }
+  .examples { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
+  .examples .chat { flex: 1 1 320px; margin: .5rem 0; }
+
+  /* ---------- misc ---------- */
+  .steps { counter-reset: step; list-style: none; padding-left: 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 2.4rem; margin: .7rem 0; }
+  .steps > li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 1.7rem; height: 1.7rem; border-radius: 50%;
+    background: var(--brand); color: #fff;
+    display: grid; place-items: center; font-weight: 700; font-size: .85rem;
+  }
+  pre {
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: .8rem 1rem;
+    overflow-x: auto;
+    font-size: .88rem;
+    line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; white-space: pre; }
+  .pill { display: inline-block; padding: .05rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  footer { max-width: 1100px; margin: 0 auto; padding: 0 1rem 3rem; color: var(--muted); font-size: .85rem; }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .toc { position: static; max-height: none; }
+    .hero h1 { font-size: 1.6rem; }
+  }
+
+  /* ---------- print / save as PDF ---------- */
+  @media print {
+    /* Always print with the light palette, whatever the screen theme is. */
+    :root {
+      --bg: #fff; --surface: #fff; --text: #000; --muted: #444; --line: #bbb;
+      --brand: #0b5c8a; --brand-soft: #e4f0f7;
+      --ok: #1d7a4b; --ok-soft: #e3f4ea; --warn: #9a5b00; --warn-soft: #fff1d6; --bad: #a3262a; --bad-soft: #fde8e8;
+      --code-bg: #eef2f6; --chat-bg: #f1f1f1; --bubble-bot: #fff; --bubble-you: #e3f7de;
+    }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    body { font-size: 10.5pt; }
+    .hero { background: none; color: #000; padding: 0 0 1rem; border-bottom: 3px solid #0b5c8a; }
+    .hero .actions, .toc, .no-print { display: none; }
+    .layout { display: block; padding: 0; }
+    #analistas { break-before: page; }
+    .chat, .note, .warn, .tip, pre { break-inside: avoid; }
+    tr { break-inside: avoid; }
+    .table-wrap { overflow: visible; }
+    h3, h4 { break-after: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <h1>Supervisor Planner</h1>
+    <p>Manual de uso del sistema de registro de la planificación diaria de supervisores comerciales por WhatsApp.</p>
+    <div class="actions no-print">
+      <a class="btn" href="#supervisores">Soy supervisor →</a>
+      <a class="btn" href="#analistas">Soy analista →</a>
+      <button class="btn" type="button" onclick="window.print()">Imprimir / guardar PDF</button>
+    </div>
+    <div class="meta">Versión 1.0 · Octubre 2026</div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <nav class="toc" aria-label="Contenido">
+    <h2>Parte 1 · Supervisores</h2>
+    <ol>
+      <li><a href="#s1">1. Qué hace el sistema</a></li>
+      <li><a href="#s2">2. Palabras o números</a></li>
+      <li><a href="#s3">3. ¿Para qué día planificas?</a></li>
+      <li><a href="#s4">4. Registrar tu planificación</a></li>
+      <li><a href="#s5">5. Confirmar, corregir, cancelar</a></li>
+      <li><a href="#s6">6. Ver o cambiar lo guardado</a></li>
+      <li><a href="#s7">7. Recordatorios</a></li>
+      <li><a href="#s8">8. Resumen de comandos</a></li>
+      <li><a href="#s9">9. Mensajes del bot</a></li>
+      <li><a href="#s10">10. Consejos</a></li>
+    </ol>
+    <h2>Parte 2 · Analistas</h2>
+    <ol>
+      <li><a href="#a1">1. Visión general</a></li>
+      <li><a href="#a2">2. Hojas del Google Sheet</a></li>
+      <li><a href="#a3">3. Reglas de negocio</a></li>
+      <li><a href="#a4">4. Calendario operativo</a></li>
+      <li><a href="#a5">5. Operación diaria</a></li>
+      <li><a href="#a6">6. Parámetros ajustables</a></li>
+      <li><a href="#a7">7. Solución de problemas</a></li>
+      <li><a href="#a8">8. Contacto y alcance</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <!-- =====================================================================
+       PARTE 1 — SUPERVISORES
+       ===================================================================== -->
+  <section class="part-block" id="supervisores">
+    <h2 class="part-title">Parte 1 — Guía del supervisor</h2>
+
+    <h3 id="s1">1. Qué hace el sistema</h3>
+    <p>Cada día laboral debes avisar <strong>cómo vas a trabajar el siguiente día</strong>: acompañando a un vendedor, cubriendo una ruta tú solo, en venta directa o en oficina. Lo haces conversando por WhatsApp con el bot. El bot valida tu elección, te muestra un resumen, <strong>te pide confirmación</strong> y recién entonces la guarda.</p>
+    <ul>
+      <li>No hay que instalar nada: es una conversación normal de WhatsApp con el número del bot.</li>
+      <li>El bot te atiende <strong>a cualquier hora y cualquier día</strong>.</li>
+      <li>Si tu número no está habilitado, el bot <strong>no responde</strong> (ver la <a href="#s9">sección 9</a>).</li>
+    </ul>
+
+    <h3 id="s2">2. Cómo responder: palabras o números</h3>
+    <p>Puedes usar <strong>palabras</strong> (<code>oficina</code>, <code>confirmar</code>) o <strong>números</strong> cuando el bot te muestra un menú numerado. Ambas formas hacen lo mismo; usa la que prefieras.</p>
+    <div class="note">
+      <span class="callout-title">Reglas de los números</span>
+      <ul>
+        <li>Solo valen <strong>mientras el menú esté en pantalla</strong>, es decir, si es lo último que te escribió el bot.</li>
+        <li>Solo cuenta <strong>un dígito exacto</strong>: <code>1</code>, <code>2</code>, <code>3</code> o <code>4</code> (también <code>1.</code> o <code>1)</code>). Un código como <code>10</code> o <code>4287</code> nunca se toma como opción de menú.</li>
+        <li>Si respondes algo que el bot no entiende, <strong>te repite el menú</strong>.</li>
+      </ul>
+    </div>
+
+    <h3 id="s3">3. ¿Para qué día estás planificando?</h3>
+    <p>El bot calcula la fecha automáticamente y <strong>siempre la escribe en el menú y en el resumen</strong>. Revísala antes de confirmar.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Cuando escribes</th><th>Planificas para</th></tr></thead>
+        <tbody>
+          <tr><td>Lunes antes de las 15:00</td><td><strong>Hoy</strong> (lunes)</td></tr>
+          <tr><td>Lunes desde las 15:00</td><td>Martes</td></tr>
+          <tr><td>Martes, miércoles o jueves</td><td>El día siguiente</td></tr>
+          <tr><td>Viernes</td><td>Sábado</td></tr>
+          <tr><td>Sábado antes de las 12:00</td><td><strong>Hoy</strong> (sábado)</td></tr>
+          <tr><td>Sábado desde las 12:00, o domingo</td><td>Lunes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="s4">4. Registrar tu planificación</h3>
+    <p>Escribe <code>AYUDA</code> (o cualquier mensaje) para ver el menú principal:</p>
+    <div class="chat">
+      <div class="msg you"><span class="who">Tú</span>AYUDA</div>
+      <div class="msg bot"><span class="who">Bot</span>📋 ¿Qué quieres registrar para el martes 15/09?
+
+1️⃣ Acompañar a un vendedor
+2️⃣ Cubrir una ruta tú solo
+3️⃣ Venta directa
+4️⃣ Oficina
+
+Responde con el número.</div>
+    </div>
+
+    <h4>4.1 Acompañar a un vendedor</h4>
+    <p>Vas en la ruta <strong>con</strong> un vendedor.</p>
+    <ul>
+      <li><strong>Con palabras:</strong> escribe directamente el <strong>código ERP del vendedor</strong> (3 a 6 dígitos), por ejemplo <code>4287</code>.</li>
+      <li><strong>Con menú:</strong> <code>1</code> y luego el código.</li>
+    </ul>
+    <p>Si el vendedor tiene <strong>más de una ruta ese día</strong>, el bot te las lista y debes responder con el <strong>número</strong> de la ruta que acompañarás.</p>
+
+    <h4>4.2 Cubrir una ruta tú solo</h4>
+    <p>Tú haces la ruta, sin acompañar a un vendedor. Escribe <code>RUTA</code> (o <code>2</code> en el menú principal). El bot pregunta cómo quieres elegirla:</p>
+    <div class="chat">
+      <div class="msg you"><span class="who">Tú</span>RUTA</div>
+      <div class="msg bot"><span class="who">Bot</span>🚗 ¿Cómo quieres elegir la ruta?
+
+1️⃣ Por código de vendedor
+2️⃣ Por código de ruta
+3️⃣ Ver las rutas de todos los vendedores de ese día
+
+Responde con el número.
+O CANCELAR para salir.</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Opción</th><th>Qué haces</th><th>Ejemplo</th></tr></thead>
+        <tbody>
+          <tr><td><code>1</code> Por código de vendedor</td><td>Envías el código del vendedor; el bot toma su ruta del día</td><td><code>4287</code></td></tr>
+          <tr><td><code>2</code> Por código de ruta</td><td>Envías el código de la ruta</td><td><code>105</code></td></tr>
+          <tr><td><code>3</code> Ver las rutas</td><td>El bot lista todas las rutas de <strong>tu zona</strong> para ese día; respondes con el <strong>número de la lista</strong></td><td><code>3</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Atajos:</strong> después de <code>RUTA</code> puedes enviar directamente un código (el bot prueba primero como vendedor y luego como ruta) o escribir <code>LISTA</code>. Si hay muchas rutas, la lista tiene páginas: <code>LISTA 2</code>, <code>LISTA 3</code>.</p>
+    <div class="chat">
+      <div class="cap">Ejemplo de lista</div>
+      <div class="msg bot"><span class="who">Bot</span>📋 RUTAS DISPONIBLES — JUEVES 17/09/2026
+
+1. SC-DTS-RUTA-126 · JEANNINE ARIANA CASTEDO VON BOECK · 105
+2. SC-DTS-RUTA-24 · DANVER DANIEL RAMIREZ RODRIGUEZ · 175
+3. SC-DTS-RUTA-75 · VENDEDOR 10 · 226
+
+Envía el NÚMERO de la ruta que vas a cubrir (ej. 3).
+O envía CANCELAR para salir.</div>
+      <div class="msg you"><span class="who">Tú</span>3</div>
+    </div>
+    <p>Cada línea es <code>número · ruta · vendedor · código de ruta</code>. Con la lista en pantalla, <strong>un número corto es la posición en la lista</strong>.</p>
+
+    <h4>4.3 Venta directa</h4>
+    <p>Vendes sin vendedor ni ruta asignada. Escribe <code>venta directa</code> (o <code>3</code> en el menú principal).</p>
+
+    <h4>4.4 Oficina</h4>
+    <p>Trabajas desde la oficina. Escribe <code>oficina</code> (o <code>4</code> en el menú principal).</p>
+
+    <h3 id="s5">5. Confirmar, corregir o cancelar</h3>
+    <p>Antes de guardar, el bot muestra un resumen y <strong>no registra nada hasta que lo confirmes</strong>:</p>
+    <div class="chat">
+      <div class="msg bot"><span class="who">Bot</span>📋 CONFIRMA TU PLANIFICACIÓN
+
+🏢 Modalidad: OFICINA
+📆 Fecha: 15/09/2026 (Martes - 2-MA)
+🏢 Sede: SCZ
+👤 Supervisor: Carlos Mendoza
+
+1️⃣ Confirmar
+2️⃣ Corregir
+3️⃣ Cancelar
+
+Responde con el número.</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Quieres</th><th>Número</th><th>Palabras que también valen</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Confirmar</strong> (guardar)</td><td><code>1</code></td><td><code>confirmar</code>, <code>confirma</code>, <code>confirmo</code>, <code>ok</code>, <code>okey</code>, <code>dale</code>, <code>listo</code>, <code>si</code> / <code>sí</code></td></tr>
+          <tr><td><strong>Corregir</strong> (cambiar)</td><td><code>2</code></td><td><code>corregir</code>, <code>corrige</code>, <code>corrijo</code>, <code>cambiar</code>, <code>cambia</code>, <code>editar</code>, <code>edito</code></td></tr>
+          <tr><td><strong>Cancelar</strong> (descartar)</td><td><code>3</code></td><td><code>cancelar</code>, <code>cancela</code>, <code>cancelo</code>, <code>descartar</code>, <code>no</code>, <code>nop</code>, <code>salir</code>, <code>salgo</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="warn">
+      <span class="callout-title">Importante</span>
+      Las palabras cortas (<code>ok</code>, <code>dale</code>, <code>listo</code>, <code>si</code>, <code>no</code>, <code>nop</code>, <code>salir</code>, <code>salgo</code>) solo cuentan cuando son <strong>todo el mensaje</strong>. “No tengo ruta para hoy” <strong>no</strong> cancela tu planificación y “ok gracias” <strong>no</strong> la confirma. Las palabras largas (<code>confirmar</code>, <code>cancelar</code>, <code>corregir</code>…) sí se reconocen dentro de una frase.
+    </div>
+    <p>Si en lugar de responder envías <strong>otro comando</strong> (otro código, <code>oficina</code>, <code>ruta</code>…), el bot reemplaza el borrador por tu nueva elección.</p>
+
+    <h3 id="s6">6. Ver o cambiar una planificación ya guardada</h3>
+    <ul>
+      <li><strong>Ver lo guardado:</strong> escribe <code>corregir</code>. El bot muestra tu planificación actual y, debajo, el menú principal con una opción extra: <strong><code>5</code> Dejar mi planificación como está</strong>. Si cambias de idea, responde <code>5</code> (o <code>cancelar</code>) y no se modifica nada.</li>
+      <li><strong>Cambiarla:</strong> envía simplemente la nueva elección (por ejemplo <code>oficina</code>). El bot avisará <em>“⚠️ Vas a reemplazar tu planificación anterior.”</em> y mostrará el resumen nuevo para confirmar.</li>
+      <li><strong>Si eliges lo mismo que ya está guardado</strong>, el bot responde <em>“✅ Esa planificación ya está activa. No hay cambios.”</em> y no modifica nada.</li>
+      <li>Cuando ya tienes una planificación guardada, el bot <strong>no contesta mensajes que no entiende</strong> ni te repite el menú (para no molestarte). Escribe <code>AYUDA</code> o <code>corregir</code> para volver a ver opciones. Si escribes <code>cancelar</code> (o <code>no</code>, <code>salir</code>) sin tener nada pendiente, te responde que tu planificación sigue activa.</li>
+    </ul>
+    <div class="chat">
+      <div class="cap">Ejemplo: ver lo guardado</div>
+      <div class="msg you"><span class="who">Tú</span>corregir</div>
+      <div class="msg bot"><span class="who">Bot</span>📋 Tu planificación actual es:
+
+🏢 Modalidad: OFICINA
+📆 Fecha: 15/09/2026 (Martes - 2-MA)
+🏢 Sede: SCZ
+👤 Supervisor: Carlos Mendoza
+
+📋 ¿Qué quieres registrar para el martes 15/09?
+1️⃣ Acompañar a un vendedor … 4️⃣ Oficina
+5️⃣ Dejar mi planificación como está</div>
+    </div>
+
+    <h3 id="s7">7. Recordatorios automáticos</h3>
+    <p>Si todavía no registraste tu planificación, el bot te escribe y deja abierto el menú; puedes responder con <code>1</code> a <code>4</code>, incluso horas después.</p>
+    <div class="chat">
+      <div class="msg bot"><span class="who">Bot</span>⏰ Aún no hemos recibido tu planificación para el 15/09/2026 (2-MA).
+
+📋 ¿Qué quieres registrar?
+
+1️⃣ Acompañar a un vendedor
+2️⃣ Cubrir una ruta tú solo
+3️⃣ Venta directa
+4️⃣ Oficina
+
+Responde con el número.</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Día</th><th>Horario de recordatorios</th><th>Para qué día</th></tr></thead>
+        <tbody>
+          <tr><td>Lunes</td><td>08:00 – 12:00</td><td>Hoy</td></tr>
+          <tr><td>Lunes</td><td>15:00 – 18:00</td><td>Martes</td></tr>
+          <tr><td>Martes a viernes</td><td>15:00 – 18:00</td><td>Día siguiente</td></tr>
+          <tr><td>Sábado</td><td>08:00 – 11:30</td><td>Hoy</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>Recibes <strong>como máximo un recordatorio por hora</strong>.</li>
+      <li><strong>No</strong> se te recuerda si escribiste al bot en los últimos 10 minutos.</li>
+      <li>Si al cierre (12:00 / 18:00) no planificaste, el sistema <strong>avisa al administrador</strong>. El sábado no hay aviso al administrador.</li>
+    </ul>
+
+    <h3 id="s8">8. Resumen de comandos</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Comando</th><th>Qué hace</th></tr></thead>
+        <tbody>
+          <tr><td><code>AYUDA</code></td><td>Abre el menú principal. Dentro de un flujo, repite el paso en que estás</td></tr>
+          <tr><td><code>&lt;código&gt;</code> (3 a 6 dígitos)</td><td>Acompañar a ese vendedor</td></tr>
+          <tr><td><code>RUTA</code></td><td>Cubrir una ruta tú solo (menú de 3 opciones)</td></tr>
+          <tr><td><code>LISTA</code> / <code>LISTA 2</code></td><td>Lista de rutas del día (dentro del flujo RUTA)</td></tr>
+          <tr><td><code>VENTA DIRECTA</code></td><td>Registrar venta directa</td></tr>
+          <tr><td><code>OFICINA</code></td><td>Registrar oficina</td></tr>
+          <tr><td><code>CONFIRMAR</code>, <code>CORREGIR</code>, <code>CANCELAR</code></td><td>Responder al resumen (o <code>1</code>, <code>2</code>, <code>3</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Las mayúsculas y las tildes no importan: <code>Sí</code>, <code>si</code> y <code>SI</code> son lo mismo.</p>
+
+    <h3 id="s9">9. Mensajes del bot y qué hacer</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>El bot dice</th><th>Qué significa</th><th>Qué hacer</th></tr></thead>
+        <tbody>
+          <tr><td><em>No encontré ningún vendedor con ese código…</em></td><td>El código no existe en tu sede</td><td>Revisa el código y vuelve a enviarlo</td></tr>
+          <tr><td><em>El código X pertenece a … Esa zona no está a tu cargo</em></td><td>El vendedor es de otra zona</td><td>Elige un vendedor de tu zona</td></tr>
+          <tr><td><em>Ese vendedor no tiene una ruta asignada…</em></td><td>No tiene ruta en la fecha planificada</td><td>Elige otro vendedor o usa <code>RUTA</code> → <code>LISTA</code></td></tr>
+          <tr><td><em>El vendedor … ya fue registrado … por …</em></td><td>Otro supervisor ya lo registró ese día</td><td>Elige otro vendedor</td></tr>
+          <tr><td><em>No encontré ninguna ruta con ese código…</em></td><td>El código de ruta no existe en tu zona ese día</td><td>Revisa el código o usa <code>LISTA</code></td></tr>
+          <tr><td><em>Número inválido, la lista tiene N rutas</em></td><td>Elegiste un número fuera de la lista</td><td>Responde con un número de 1 a N</td></tr>
+          <tr><td><em>Tu registro está incompleto…</em></td><td>Tu usuario no tiene zona asignada</td><td>Avisa al analista (ver Parte 2)</td></tr>
+          <tr><td><em>Demasiados intentos inválidos</em></td><td>Te equivocaste 3 veces eligiendo ruta</td><td>Empieza de nuevo con el código</td></tr>
+          <tr><td><em>Tuve un problema procesando tu mensaje</em></td><td>Falla temporal del sistema</td><td>Espera unos segundos y reenvía</td></tr>
+          <tr><td><em>(sin respuesta)</em></td><td>Tu número no está habilitado, o ya tienes planificación y el mensaje no se entendió</td><td>Escribe <code>AYUDA</code>; si sigue igual, contacta al analista</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="s10">10. Consejos</h3>
+    <div class="tip">
+      <ul>
+        <li><strong>Un mensaje a la vez.</strong> Si envías el mismo texto dos veces en menos de 2 segundos, el bot ignora el repetido.</li>
+        <li><strong>La conversación vence a los 30 minutos sin actividad</strong> (2 horas si respondes un recordatorio). Si vence, simplemente empieza de nuevo.</li>
+        <li><strong>Revisa la fecha</strong> del resumen antes de confirmar, sobre todo los lunes y sábados.</li>
+        <li><strong>Cancelar siempre es seguro:</strong> <code>cancelar</code> descarta lo pendiente y nunca borra una planificación ya guardada.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- =====================================================================
+       PARTE 2 — ANALISTAS
+       ===================================================================== -->
+  <section class="part-block" id="analistas">
+    <h2 class="part-title">Parte 2 — Guía del analista</h2>
+
+    <h3 id="a1">1. Visión general</h3>
+    <pre><code>Supervisor ⇄ WhatsApp ⇄ WAHA (puente WhatsApp) ⇄ Aplicación (bot) ⇄ Google Sheets</code></pre>
+    <ul>
+      <li><strong>Todo se guarda en un Google Sheet.</strong> No hay base de datos adicional.</li>
+      <li>El <strong>Sheet es la fuente de verdad</strong> de supervisores, rutas y planificaciones. El analista administra el sistema editando el Sheet; no hay panel aparte.</li>
+      <li>La aplicación corre en Docker en un equipo local (ver <a href="#a5">sección 5</a>).</li>
+    </ul>
+
+    <h3 id="a2">2. Hojas del Google Sheet</h3>
+    <div class="warn">
+      <span class="callout-title">Importante</span>
+      No renombres hojas ni columnas, no cambies su orden y no agregues columnas intermedias: el sistema las busca por nombre y posición.
+    </div>
+
+    <h4>2.1 <code>SUPERVISORES</code> — quién puede usar el bot</h4>
+    <p>Fila 1, exactamente: <code>Nombre | Telefono | Sede | Zona | Activo | Ultimo_Recordatorio</code></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Columna</th><th>Qué poner</th></tr></thead>
+        <tbody>
+          <tr><td><code>Nombre</code></td><td>Nombre del supervisor, <strong>tal como saldrá en los reportes</strong></td></tr>
+          <tr><td><code>Telefono</code></td><td>Su número de WhatsApp (8 dígitos locales; también acepta con 591)</td></tr>
+          <tr><td><code>Sede</code></td><td><code>SCZ</code>, <code>CBBA</code> o <code>LPZ</code></td></tr>
+          <tr><td><code>Zona</code></td><td>Exactamente igual a la columna <code>ZONA</code> de los maestros (ej. <code>N</code>)</td></tr>
+          <tr><td><code>Activo</code></td><td><code>TRUE</code> para habilitar. Cualquier otro valor lo deja <strong>sin acceso</strong></td></tr>
+          <tr><td><code>Ultimo_Recordatorio</code></td><td><strong>No editar.</strong> Lo escribe el bot</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>Alta:</strong> agrega la fila completa con <code>Activo=TRUE</code>. No existe comando de auto-registro.</li>
+      <li><strong>Baja temporal o definitiva:</strong> cambia <code>Activo</code> a <code>FALSE</code>.</li>
+      <li>Los cambios se aplican en <strong>hasta 5 minutos</strong> (caché de supervisores).</li>
+      <li>Un supervisor sin <code>Zona</code> no puede usar <code>RUTA</code> ni acompañar vendedores (verá “Tu registro está incompleto”).</li>
+      <li>Se asume un supervisor por zona y por sede.</li>
+    </ul>
+
+    <h4>2.2 Maestros de rutas por sede</h4>
+    <p>Una hoja por sede (nombres configurados en el sistema, p. ej. <code>PLANIFICACION_SCZ_RENOM</code>). Columnas que usa el bot: <code>RUTA</code>, <code>ZONA</code>, <code>DIA</code>, <code>VENDEDOR</code>, <code>CODIGO ERP</code>, <code>CODIGO RUTA</code>.</p>
+    <ul>
+      <li><code>DIA</code> usa los códigos <code>1-LU</code>, <code>2-MA</code>, <code>3-MI</code>, <code>4-JU</code>, <code>5-VI</code>, <code>6-SA</code>.</li>
+      <li><code>LISTA</code> muestra solo filas de <strong>la zona del supervisor</strong> y del día planificado, <strong>sin</strong> rutas cuyo nombre contenga <code>MERC</code>, ordenadas por <code>CODIGO RUTA</code> (numéricamente).</li>
+      <li>Si la celda <code>VENDEDOR</code> está vacía, la lista muestra “(sin vendedor)”.</li>
+      <li>Los cambios en los maestros se reflejan en <strong>hasta 30 minutos</strong> (o al reiniciar la aplicación).</li>
+    </ul>
+
+    <h4>2.3 <code>PLANIFICACION_DIARIA</code> — el resultado</h4>
+    <p>Una fila por supervisor, sede y fecha de trabajo.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Columna</th><th>Contenido</th></tr></thead>
+        <tbody>
+          <tr><td><code>ID_Registro</code></td><td>Identificador único</td></tr>
+          <tr><td><code>Fecha_Registro</code>, <code>Hora_Registro</code></td><td>Cuándo se registró (o se registró por primera vez tras un escalamiento)</td></tr>
+          <tr><td><code>Fecha_Trabajo</code></td><td>Día planificado, formato <code>AAAA-MM-DD</code></td></tr>
+          <tr><td><code>Sede</code>, <code>Supervisor</code></td><td>Quién planificó</td></tr>
+          <tr><td><code>Modalidad</code></td><td><code>ACOMPAÑAMIENTO</code>, <code>RUTA</code>, <code>VENTA DIRECTA</code> u <code>OFICINA</code></td></tr>
+          <tr><td><code>Vendedor_Apoyo</code>, <code>Codigo_ERP_Vendedor</code></td><td>Ver la tabla siguiente</td></tr>
+          <tr><td><code>Ruta_Oficial</code>, <code>Zona</code>, <code>Codigo_Ruta</code>, <code>DIA</code></td><td>Datos de la ruta (<code>N/A</code> si no aplica)</td></tr>
+          <tr><td><code>Estado</code></td><td>Ver más abajo</td></tr>
+          <tr><td><code>Es_Cambio</code></td><td><code>TRUE</code> si reemplazó una planificación anterior del mismo día</td></tr>
+          <tr><td><code>Observaciones</code></td><td>Libre, para uso del analista</td></tr>
+          <tr><td><code>ID_Mensaje_WA</code></td><td>Mensaje de WhatsApp que originó el registro</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>Qué se guarda según la modalidad</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Modalidad</th><th><code>Vendedor_Apoyo</code></th><th><code>Codigo_ERP_Vendedor</code></th><th>Datos de ruta</th></tr></thead>
+        <tbody>
+          <tr><td>ACOMPAÑAMIENTO</td><td>Nombre del vendedor</td><td>Código del vendedor</td><td>Ruta del vendedor ese día</td></tr>
+          <tr><td>RUTA (por código de vendedor)</td><td><em>(vacío)</em></td><td>Código del vendedor</td><td>Ruta del vendedor ese día</td></tr>
+          <tr><td>RUTA (por código de ruta o lista)</td><td><em>(vacío)</em></td><td><code>N/A</code></td><td>Ruta elegida</td></tr>
+          <tr><td>VENTA DIRECTA</td><td><code>VENTA DIRECTA</code></td><td><code>N/A</code></td><td><code>N/A</code></td></tr>
+          <tr><td>OFICINA</td><td><code>N/A</code></td><td><code>N/A</code></td><td><code>N/A</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>Estados</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Estado</th><th>Significado</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill ok">REGISTRADO</span></td><td>Primera planificación confirmada del día</td></tr>
+          <tr><td><span class="pill ok">MODIFICADO</span></td><td>El supervisor la reemplazó (<code>Es_Cambio = TRUE</code>)</td></tr>
+          <tr><td><span class="pill warn">PENDIENTE_ESCALADO</span></td><td><strong>No planificó a tiempo.</strong> Es una marca, no una planificación (<code>Modalidad = N/A</code>). Si el supervisor planifica después, esa misma fila pasa a <code>REGISTRADO</code></td></tr>
+          <tr><td><span class="pill bad">CANCELADO</span></td><td>Fila anulada manualmente: el bot la ignora y el supervisor puede volver a planificar ese día</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">Para <strong>anular una planificación</strong> escribe <code>CANCELADO</code> en <code>Estado</code>. No borres ni insertes filas a mano.</div>
+
+    <h4>2.4 <code>LOG_BOT</code> — auditoría</h4>
+    <p>Una fila por evento de supervisores autorizados (a los números desconocidos nunca se les registra nada). Columnas: <code>timestamp</code>, <code>telefono_resuelto</code>, <code>whatsapp_id</code>, <code>nombre</code>, <code>sede</code>, <code>wa_msg_id</code>, <code>mensaje_original</code>, <code>intencion</code>, <code>estado_antes</code>, <code>estado_despues</code>, <code>accion</code>, <code>resultado</code>, <code>error</code>, <code>detalles</code>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th><code>accion</code></th><th><code>resultado</code></th><th>Qué indica</th></tr></thead>
+        <tbody>
+          <tr><td><code>CONFIRM_PLANNING</code></td><td><code>SUCCESS</code></td><td>Planificación registrada o actualizada</td></tr>
+          <tr><td><code>CONFIRM_PLANNING</code></td><td><code>NO_CHANGES</code></td><td>Confirmó algo idéntico a lo guardado; no se escribió nada</td></tr>
+          <tr><td><code>REJECTED_WRONG_ZONE</code></td><td><code>REJECTED</code></td><td>Intentó un vendedor de otra zona</td></tr>
+          <tr><td><code>REJECTED_DUPLICATE_SELLER</code></td><td><code>REJECTED</code></td><td>Vendedor ya tomado por otro supervisor ese día</td></tr>
+          <tr><td><code>REJECTED_NO_ZONE</code></td><td><code>REJECTED</code></td><td>Supervisor sin zona asignada</td></tr>
+          <tr><td><code>IGNORED_ALREADY_REGISTERED</code></td><td><code>IGNORED</code></td><td>Mensaje no entendido de alguien que ya planificó</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="a3">3. Reglas de negocio que aplica el bot</h3>
+    <ol>
+      <li><strong>Zona:</strong> un supervisor solo puede elegir vendedores y rutas de su zona.</li>
+      <li><strong>Día:</strong> el vendedor debe tener ruta en el día de trabajo. Si tiene varias, el supervisor elige una.</li>
+      <li><strong>Duplicados:</strong> un mismo vendedor no puede ser registrado por dos supervisores el mismo día en la misma sede (al elegir por código de vendedor). Al elegir una ruta directamente (por código o lista) no se aplica, porque cada zona tiene un solo supervisor.</li>
+      <li><strong>Una planificación activa por supervisor y fecha:</strong> una nueva la reemplaza (queda <code>MODIFICADO</code>); si es idéntica, no se escribe nada.</li>
+    </ol>
+
+    <h3 id="a4">4. Calendario operativo</h3>
+    <p>El equipo que ejecuta el bot se enciende el <strong>lunes entre 08:00 y 08:30</strong> y se apaga el <strong>sábado a las 12:00</strong>. Al arrancar, el sistema ejecuta un ciclo de recordatorios inmediato para recuperar lo que se perdió mientras estaba apagado.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Día</th><th>Recordatorios</th><th>Cierre y escalamiento</th></tr></thead>
+        <tbody>
+          <tr><td>Lunes AM</td><td>08:00 – 12:00, para <strong>hoy</strong></td><td>12:00: marca <code>PENDIENTE_ESCALADO</code> y avisa al administrador</td></tr>
+          <tr><td>Lunes PM</td><td>15:00 – 18:00, para <strong>martes</strong></td><td>18:00: ídem</td></tr>
+          <tr><td>Martes a viernes</td><td>15:00 – 18:00, para el día siguiente</td><td>18:00: ídem</td></tr>
+          <tr><td>Sábado</td><td>08:00 – 11:30, para <strong>hoy</strong></td><td><strong>Sin escalamiento</strong> (el equipo se apaga a las 12:00)</td></tr>
+          <tr><td>Domingo</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>El ciclo corre cada 30 minutos en punto; cada supervisor recibe <strong>como máximo 1 recordatorio por hora</strong> y ninguno si escribió hace menos de 10 minutos. El último del sábado (11:30) ignora el límite horario.</li>
+      <li>El escalamiento ocurre <strong>una sola vez por supervisor y día</strong>. El administrador recibe un WhatsApp como este:</li>
+    </ul>
+    <div class="chat">
+      <div class="msg bot"><span class="who">Bot → administrador</span>⚠️ PLANIFICACIÓN PENDIENTE
+
+• Carlos Mendoza (SCZ)
+• Maria Suarez (CBBA)
+
+Fecha de trabajo: 15/09/2026</div>
+    </div>
+    <p>Quien figure como <code>PENDIENTE_ESCALADO</code> <strong>sigue recibiendo recordatorios</strong> (cuando corresponda) y puede planificar con normalidad.</p>
+
+    <h3 id="a5">5. Operación diaria</h3>
+    <h4>Rutina sugerida</h4>
+    <ol class="steps">
+      <li>Lunes ~08:00: encender el equipo y verificar que Docker y WAHA estén arriba.</li>
+      <li>Comprobar <code>http://localhost:8000/health</code> (debe responder <code>status: ok</code> y <code>sheets: connected</code>).</li>
+      <li>Durante la ventana de la tarde, revisar <code>PLANIFICACION_DIARIA</code> filtrando por la <code>Fecha_Trabajo</code> del día siguiente.</li>
+      <li>Atender los avisos de <em>PLANIFICACIÓN PENDIENTE</em> contactando al supervisor.</li>
+      <li>Sábado antes de las 12:00: verificar que no queden pendientes críticos.</li>
+    </ol>
+
+    <h4>Comandos útiles</h4>
+    <p>Desde la carpeta del proyecto:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Acción</th><th>Comando</th></tr></thead>
+        <tbody>
+          <tr><td>Ver estado de los servicios</td><td><code>docker compose ps</code></td></tr>
+          <tr><td>Ver el log en vivo</td><td><code>docker compose logs -f app</code></td></tr>
+          <tr><td>Reiniciar la aplicación</td><td><code>docker compose restart app</code></td></tr>
+          <tr><td>Levantar todo</td><td><code>docker compose up -d</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>Si <strong>WhatsApp se desconecta</strong>, abre el panel de WAHA (<code>http://localhost:3000/dashboard</code>) y vuelve a escanear el QR con el teléfono del bot (pasos en el <code>README.md</code>).</li>
+      <li>Reiniciar la aplicación <strong>borra las conversaciones en curso</strong>: los supervisores solo deben reenviar su último mensaje. Las planificaciones ya confirmadas no se pierden.</li>
+    </ul>
+
+    <div class="warn">
+      <span class="callout-title">Reglas de oro</span>
+      <ul>
+        <li>Ejecutar <strong>una sola instancia</strong> del bot: dos a la vez duplican avisos y filas.</li>
+        <li>Evitar ordenar, insertar o borrar filas de <code>PLANIFICACION_DIARIA</code> mientras los supervisores están registrando (usa <strong>filtros o vistas de filtro</strong>, no ordenamientos). Editar celdas está bien.</li>
+        <li>Mantener el número de WhatsApp del bot dedicado a este sistema.</li>
+      </ul>
+    </div>
+
+    <h3 id="a6">6. Parámetros ajustables</h3>
+    <p>Se cambian en el archivo <code>.env</code> y requieren reiniciar la aplicación. Valores recomendados para producción:</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Valor</th><th>Para qué sirve</th></tr></thead>
+        <tbody>
+          <tr><td><code>REMINDER_INTERVAL_MINUTES</code></td><td><code>30</code></td><td>Cada cuántos minutos corre el ciclo (debe dividir 60)</td></tr>
+          <tr><td><code>REMINDER_COOLDOWN_MINUTES</code></td><td><code>60</code></td><td>Mínimo entre recordatorios al mismo supervisor</td></tr>
+          <tr><td><code>REMINDER_ACTIVITY_WINDOW_MINUTES</code></td><td><code>10</code></td><td>No recordar a quien acaba de escribir</td></tr>
+          <tr><td><code>MONDAY_AM_*</code>, <code>MONDAY_PM_*</code>, <code>WEEKDAY_PM_*</code>, <code>SATURDAY_AM_*</code></td><td>ver <code>.env.example</code></td><td>Horarios de recordatorio y escalamiento</td></tr>
+          <tr><td><code>CONVERSATION_TTL_MINUTES</code></td><td><code>30</code></td><td>Cuánto dura una conversación inactiva</td></tr>
+          <tr><td><code>REMINDER_MENU_TTL_MINUTES</code></td><td><code>120</code></td><td>Cuánto sigue abierto el menú de un recordatorio</td></tr>
+          <tr><td><code>ADMIN_PHONE</code></td><td>8 dígitos</td><td>Quién recibe los avisos de escalamiento</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">Para pruebas se puede bajar <code>REMINDER_COOLDOWN_MINUTES</code> a <code>1</code>; <strong>no olvidar devolverlo a <code>60</code></strong>.</div>
+
+    <h3 id="a7">7. Solución de problemas</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Síntoma</th><th>Causa probable</th><th>Qué revisar o hacer</th></tr></thead>
+        <tbody>
+          <tr><td>Un supervisor dice que el bot no le responde</td><td>Número no habilitado, <code>Activo</code> distinto de <code>TRUE</code>, o teléfono mal escrito</td><td>Revisar la fila en <code>SUPERVISORES</code> (esperar hasta 5 min tras editar)</td></tr>
+          <tr><td>“Tu registro está incompleto”</td><td><code>Zona</code> vacía</td><td>Completar <code>Zona</code></td></tr>
+          <tr><td>“No encontré ningún vendedor / ruta” para un código válido</td><td>El maestro cambió hace poco, o el vendedor no tiene ruta ese día</td><td>Esperar hasta 30 min o reiniciar la app; verificar <code>DIA</code> y <code>ZONA</code> en el maestro</td></tr>
+          <tr><td>La LISTA sale vacía</td><td>No hay filas de esa zona y día</td><td>Revisar <code>ZONA</code> y <code>DIA</code> del maestro</td></tr>
+          <tr><td>Un supervisor quedó “escalado” pero sí planificó</td><td>Planificó después del cierre</td><td>Normal: su fila pasa a <code>REGISTRADO</code> al confirmar</td></tr>
+          <tr><td>No llegan recordatorios</td><td>Fuera de horario, equipo apagado, WhatsApp desconectado, o el supervisor ya planificó o escribió hace poco</td><td>Revisar el calendario (sección 4) y <code>docker compose logs -f app</code></td></tr>
+          <tr><td>No llegan los avisos al administrador</td><td><code>ADMIN_PHONE</code> incorrecto o WhatsApp desconectado</td><td>Revisar <code>.env</code> y el panel de WAHA</td></tr>
+          <tr><td>En el log aparece <code>Retry 1/3 … after 429</code></td><td>Google Sheets limitó temporalmente las consultas</td><td>Suele resolverse solo; si es frecuente, reducir la actividad manual sobre el Sheet</td></tr>
+          <tr><td><code>health</code> muestra <code>sheets: disconnected</code></td><td>Credenciales o ID del Sheet incorrectos, o sin permiso</td><td>Verificar que la cuenta de servicio sea <strong>Editor</strong> del Sheet</td></tr>
+          <tr><td>Aparece “Tuve un problema procesando tu mensaje”</td><td>Error puntual del sistema</td><td>Buscar <code>Failed message</code> en el log; el supervisor puede reintentar</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Cómo leer el log:</strong> cada mensaje deja <code>Processing message from &lt;teléfono&gt; id=…</code> y luego <code>Finished message … in N.Ns</code> o <code>Failed message … : &lt;error&gt;</code>. Los recordatorios dejan <code>Dispatched reminder to &lt;nombre&gt;</code>.</p>
+
+    <h3 id="a8">8. Contacto y alcance</h3>
+    <p>Este manual describe el comportamiento vigente del sistema. Ante cualquier duda sobre datos o accesos, el analista de turno es el primer punto de contacto del supervisor; los cambios de configuración del servidor (<code>.env</code>, Docker, WhatsApp) los realiza únicamente el responsable técnico.</p>
+  </section>
+
+  </main>
+</div>
+
+<footer>Supervisor Planner · Manual de uso · Versión 1.0 · Octubre 2026</footer>
+
+</body>
+</html>

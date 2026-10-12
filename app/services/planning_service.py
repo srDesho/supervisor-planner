@@ -23,12 +23,26 @@ from app.business.planning_rules import (
     build_selection_prompt,
     build_current_plan_message,
     build_route_list,
-    route_list_pages
+    route_list_pages,
+    weekday_name_es
 )
-from app.whatsapp.parser import ParsedWhatsAppMessage, extract_planning_intent, extract_ruta_input
+from app.whatsapp.parser import (
+    ParsedWhatsAppMessage, extract_planning_intent, extract_ruta_input, parse_menu_choice
+)
 from app.whatsapp.lid_resolver import resolve_to_phone
 from app.whatsapp.templates import (
-    MSG_HELP,
+    MSG_MAIN_MENU,
+    MSG_MAIN_MENU_KEEP,
+    MSG_KEEP_PLAN_OK,
+    MSG_NOTHING_PENDING,
+    MSG_MAIN_MENU_COMMANDS_HINT,
+    MSG_RUTA_MENU,
+    MSG_ASK_SELLER_CODE,
+    MSG_ASK_ROUTE_CODE,
+    MSG_SELLER_CODE_INVALID,
+    MSG_ROUTE_CODE_INVALID,
+    MSG_LIST_PICK_INVALID,
+    MSG_ROUTE_CODE_NOT_FOUND,
     MSG_SELLER_CODE_NOT_FOUND,
     MSG_SELLER_NO_ROUTE_TODAY,
     MSG_SUPERVISOR_NO_ZONE,
@@ -36,15 +50,11 @@ from app.whatsapp.templates import (
     MSG_SELLER_ALREADY_ASSIGNED,
     MSG_REGISTERED_OK,
     MSG_UPDATED_OK,
-    MSG_AWAITING_CONFIRMATION_HELP,
-    MSG_NO_PLAN_CANCEL_HINT,
     MSG_NO_PLAN_INFO,
     MSG_PLAN_ALREADY_ACTIVE,
     MSG_CANCELLED_NO_CHANGES,
     MSG_SELECTION_INVALID,
     MSG_SELECTION_TOO_MANY_ERRORS,
-    MSG_RUTA_ASK_CODE,
-    MSG_RUTA_CODE_INVALID,
     MSG_RUTA_CODE_NOT_FOUND,
     MSG_RUTA_LIST_OUT_OF_RANGE,
     MSG_RUTA_LIST_EMPTY,
@@ -62,6 +72,9 @@ MAX_SELECTION_ATTEMPTS = 3
 
 MODALIDAD_ACOMPANAMIENTO = "ACOMPAÑAMIENTO"
 MODALIDAD_RUTA = "RUTA"
+
+# Menu 3 (the confirmation summary): option number -> the intent it stands for.
+_CONFIRMATION_MENU = {1: "confirm", 2: "correct", 3: "cancel"}
 
 logger = logging.getLogger(__name__)
 
@@ -114,34 +127,34 @@ class PlanningService:
         sede = supervisor["Sede"]
         supervisor_name = supervisor["Nombre"]
 
-        # 3. AYUDA/HELP is always available, in any conversational state.
         intent = extract_planning_intent(text)
-        if intent["type"] == "help":
-            await self.whatsapp_client.send_message(chat_id, MSG_HELP)
-            return
 
-        # 4. Conversational state (in-memory, keyed by phone).
+        # 3. Conversational state (in-memory, keyed by phone).
         now = eval_datetime or get_current_bolivia_datetime()
         entry = self.conversation_svc.get(phone)
         step = entry["state"] if entry else "IDLE"
-
-        # Silencio después de registrado: si ya tiene plan activo para la fecha y está en IDLE.
-        # Una fila PENDIENTE_ESCALADO no es un plan: quien fue escalado planifica con normalidad.
         fecha_trabajo = calculate_work_date(now)
-        active = await run_in_sheets_thread(
-            self.sheets_repo.find_active,
-            fecha_trabajo.strftime("%Y-%m-%d"),
-            sede, supervisor_name
-        )
 
-        # CORREGIR with nothing pending is an explicit request to look at the saved
-        # plan, so it is answered instead of falling into the silence rule below.
-        if step == "IDLE" and intent["type"] == "correct":
-            await self._handle_correct_in_idle(active, fecha_trabajo, chat_id)
+        # AYUDA is available in any state; what it shows depends on the step.
+        if intent["type"] == "help":
+            await self._handle_help(step, entry, supervisor, phone, chat_id, fecha_trabajo)
             return
 
-        if is_real_planning(active) and step == "IDLE":
-            if intent["type"] in ("unknown", "confirm", "correct"):
+        if step == "IDLE":
+            # CORREGIR with nothing pending is an explicit request to look at the saved
+            # plan, so it is answered instead of falling into the silence rule below.
+            if intent["type"] == "correct":
+                await self._handle_correct(supervisor, phone, chat_id, fecha_trabajo)
+                return
+
+            # Silencio después de registrado: si ya tiene plan activo para la fecha y está en IDLE.
+            # Una fila PENDIENTE_ESCALADO no es un plan: quien fue escalado planifica con normalidad.
+            active = await run_in_sheets_thread(
+                self.sheets_repo.find_active,
+                fecha_trabajo.strftime("%Y-%m-%d"),
+                sede, supervisor_name
+            )
+            if is_real_planning(active) and intent["type"] in ("unknown", "confirm", "correct"):
                 await run_in_sheets_thread(
                     self.audit_svc.log,
                     phone=phone,
@@ -156,7 +169,20 @@ class PlanningService:
                 )
                 return
 
+            if is_real_planning(active) and intent["type"] == "cancel":
+                # Nothing is pending, so there is nothing to cancel; say so instead of offering the menu.
+                await self.whatsapp_client.send_message(chat_id, MSG_NOTHING_PENDING)
+                return
+
+            # 4. New planning (an unknown message without a saved plan gets the main menu).
+            await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
+            return
+
         if step == "AWAITING_CONFIRMATION":
+            # Menu 3: 1 / 2 / 3 stand for CONFIRMAR / CORREGIR / CANCELAR (words still work).
+            choice = parse_menu_choice(text)
+            if choice in _CONFIRMATION_MENU:
+                intent = {"type": _CONFIRMATION_MENU[choice], "codigo_erp": None, "raw": text}
             await self._handle_awaiting_confirmation(intent, entry, supervisor, phone, chat_id, message_id, now)
             return
 
@@ -164,12 +190,218 @@ class PlanningService:
             await self._handle_awaiting_selection(text, entry, supervisor, phone, chat_id)
             return
 
-        if step == "AWAITING_RUTA_CODE":
-            await self._handle_awaiting_ruta_code(text, entry, supervisor, phone, chat_id, message_id, now)
+        if step == "AWAITING_MAIN_MENU":
+            await self._handle_awaiting_main_menu(text, intent, entry, supervisor, phone, chat_id, message_id, now)
             return
 
-        # 5. New planning.
+        if step == "AWAITING_SELLER_CODE":
+            await self._handle_awaiting_seller_code(text, intent, supervisor, phone, chat_id, message_id, now)
+            return
+
+        if step == "AWAITING_RUTA_CODE":
+            await self._handle_awaiting_ruta_code(text, intent, entry, supervisor, phone, chat_id, message_id, now)
+            return
+
+        # Unknown step (should not happen): treat it like a fresh conversation.
         await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
+
+    # --- Menus -------------------------------------------------------------
+
+    async def _send_main_menu(
+        self,
+        phone: str,
+        chat_id: str,
+        fecha_trabajo,
+        prefix: str = "",
+        with_commands_hint: bool = False,
+        keep_option: bool = False
+    ) -> None:
+        """
+        Menu 1. Leaves the supervisor in AWAITING_MAIN_MENU so "1".."4" mean something.
+        With keep_option (the supervisor already has a saved plan) it adds "5. Dejar mi
+        planificación como está" and remembers it in the state: "5" then leaves the plan
+        untouched, and a text the bot does not understand is no longer answered with the
+        menu again (someone with a plan is not nagged to register).
+        Known limitation (accepted): the day named in the menu is the target day at the
+        moment it is sent; the plan itself is created with the target day at the moment
+        of the answer. They differ only if the reply crosses a cutoff (Monday 15:00,
+        Saturday 12:00).
+        """
+        self.conversation_svc.set(phone, "AWAITING_MAIN_MENU", payload={"keep_option": keep_option})
+        text = (MSG_MAIN_MENU_KEEP if keep_option else MSG_MAIN_MENU).format(
+            dia=weekday_name_es(fecha_trabajo), fecha=fecha_trabajo.strftime("%d/%m")
+        )
+        if with_commands_hint:
+            text += f"\n\n{MSG_MAIN_MENU_COMMANDS_HINT}"
+        if prefix:
+            text = f"{prefix}\n\n{text}"
+        await self.whatsapp_client.send_message(chat_id, text)
+
+    async def _start_ruta_menu(self, phone: str, chat_id: str) -> None:
+        """Menu 2. No sub-mode chosen yet: a first "1".."3" picks an option, a code still works as before."""
+        self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={"list_shown": False, "submode": None})
+        await self.whatsapp_client.send_message(chat_id, MSG_RUTA_MENU)
+
+    async def _start_seller_code(self, phone: str, chat_id: str) -> None:
+        self.conversation_svc.set(phone, "AWAITING_SELLER_CODE", payload={})
+        await self.whatsapp_client.send_message(chat_id, MSG_ASK_SELLER_CODE)
+
+    async def _handle_help(
+        self,
+        step: str,
+        entry: Optional[Dict[str, Any]],
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        fecha_trabajo
+    ) -> None:
+        """
+        AYUDA. With nothing in progress it opens the main menu. In the middle of a
+        flow it only REPEATS the current step: if it showed the main menu there, a
+        "3" typed to answer it would be read by the step that is really waiting
+        (e.g. as "Cancelar" in the confirmation) and could discard the plan.
+        """
+        payload = entry["payload"] if entry else {}
+        if step == "AWAITING_CONFIRMATION":
+            await self._resend_confirmation(payload["draft"], supervisor, chat_id)
+        elif step == "AWAITING_SELECTION":
+            await self.whatsapp_client.send_message(chat_id, build_selection_prompt(payload["candidates"]))
+        elif step == "AWAITING_SELLER_CODE":
+            await self.whatsapp_client.send_message(chat_id, MSG_ASK_SELLER_CODE)
+        elif step == "AWAITING_RUTA_CODE":
+            await self._resend_ruta_prompt(payload, chat_id)
+        else:
+            active = await run_in_sheets_thread(
+                self.sheets_repo.find_active,
+                fecha_trabajo.strftime("%Y-%m-%d"), supervisor["Sede"], supervisor["Nombre"]
+            )
+            await self._send_main_menu(
+                phone, chat_id, fecha_trabajo,
+                with_commands_hint=True, keep_option=is_real_planning(active)
+            )
+
+    async def _resend_ruta_prompt(self, payload: Dict[str, Any], chat_id: str) -> None:
+        """Repeats whatever the RUTA flow is waiting for: the list, a code prompt or Menu 2."""
+        routes = payload.get("routes") or []
+        if payload.get("list_shown") and routes:
+            fecha = datetime.strptime(payload["fecha_trabajo"], "%Y-%m-%d").date()
+            message = build_route_list(fecha, routes, 1)
+        elif payload.get("submode") == "seller":
+            message = MSG_ASK_SELLER_CODE
+        elif payload.get("submode") == "route":
+            message = MSG_ASK_ROUTE_CODE
+        else:
+            message = MSG_RUTA_MENU
+        await self.whatsapp_client.send_message(chat_id, message)
+
+    async def _handle_correct(self, supervisor: Dict[str, Any], phone: str, chat_id: str, fecha_trabajo) -> None:
+        """
+        CORREGIR (Menu 4), from IDLE, the main menu or a pending confirmation: shows
+        the SAVED plan (or says there is none) and goes back to the main menu to pick
+        what to register. A pending draft is discarded: CORREGIR means "I want to
+        change it".
+        """
+        fecha_str = fecha_trabajo.strftime("%Y-%m-%d")
+        active = await run_in_sheets_thread(
+            self.sheets_repo.find_active, fecha_str, supervisor["Sede"], supervisor["Nombre"]
+        )
+        if is_real_planning(active):
+            saved_plan = await self._saved_plan_as_dict(active, fecha_str)
+            prefix = build_current_plan_message(fecha_trabajo, get_weekday_code(fecha_trabajo), saved_plan)
+        else:
+            prefix = MSG_NO_PLAN_INFO.format(fecha=fecha_trabajo.strftime("%d/%m/%Y"))
+        await self._send_main_menu(
+            phone, chat_id, fecha_trabajo, prefix=prefix, keep_option=is_real_planning(active)
+        )
+
+    async def _resend_confirmation(self, draft: Dict[str, Any], supervisor: Dict[str, Any], chat_id: str) -> None:
+        """Shows the pending summary (with its menu) again, without touching the state."""
+        fecha_trabajo = datetime.strptime(draft["fecha_trabajo"], "%Y-%m-%d").date()
+        active = await run_in_sheets_thread(
+            self.sheets_repo.find_active, draft["fecha_trabajo"], supervisor["Sede"], supervisor["Nombre"]
+        )
+        build = build_confirmation_summary_update if is_real_planning(active) else build_confirmation_summary
+        await self.whatsapp_client.send_message(
+            chat_id, build(fecha_trabajo, get_weekday_code(fecha_trabajo), draft)
+        )
+
+    async def _handle_awaiting_main_menu(
+        self,
+        text: str,
+        intent: Dict[str, Any],
+        entry: Dict[str, Any],
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        message_id: str,
+        now: datetime
+    ) -> None:
+        """
+        Menu 1 answers. Any text command also works. Anything else repeats the menu,
+        unless the supervisor already has a saved plan (keep_option): then the bot
+        stays quiet instead of nagging, and "5" leaves the plan as it is.
+        """
+        keep_option = bool(entry["payload"].get("keep_option"))
+        choice = parse_menu_choice(text)
+        if choice == 5 and keep_option:
+            self.conversation_svc.clear(phone)
+            await self.whatsapp_client.send_message(chat_id, MSG_KEEP_PLAN_OK)
+            return
+        if choice == 1:
+            await self._start_seller_code(phone, chat_id)
+            return
+        if choice == 2:
+            await self._start_ruta_menu(phone, chat_id)
+            return
+        if choice == 3:
+            intent = {"type": "venta_directa", "codigo_erp": None, "raw": text}
+        elif choice == 4:
+            intent = {"type": "oficina", "codigo_erp": None, "raw": text}
+
+        if intent["type"] in ("code_only", "ruta", "venta_directa", "oficina"):
+            await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
+            return
+        if intent["type"] == "cancel":
+            self.conversation_svc.clear(phone)
+            await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
+            return
+        if intent["type"] == "correct":
+            await self._handle_correct(supervisor, phone, chat_id, calculate_work_date(now))
+            return
+        if keep_option:
+            return
+        await self._send_main_menu(phone, chat_id, calculate_work_date(now))
+
+    async def _handle_awaiting_seller_code(
+        self,
+        text: str,
+        intent: Dict[str, Any],
+        supervisor: Dict[str, Any],
+        phone: str,
+        chat_id: str,
+        message_id: str,
+        now: datetime
+    ) -> None:
+        """
+        Waiting for the code of the seller to accompany (main menu, option 1). Any
+        number is a seller code here -- even "1" or "10": the supervisor already
+        chose this sub-mode, so it is not a menu option. A rejected code keeps the
+        state so another one can be tried.
+        """
+        ruta_input = extract_ruta_input(text)
+        if ruta_input["type"] == "cancel":
+            self.conversation_svc.clear(phone)
+            await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
+            return
+        if intent["type"] in ("ruta", "venta_directa", "oficina"):
+            await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
+            return
+        if ruta_input["type"] == "number":
+            await self._handle_seller_code(
+                ruta_input["value"], MODALIDAD_ACOMPANAMIENTO, supervisor, phone, chat_id, message_id, now
+            )
+            return
+        await self.whatsapp_client.send_message(chat_id, MSG_SELLER_CODE_INVALID)
 
     # --- New planning (code_only / ruta / venta_directa / oficina) ---
 
@@ -196,9 +428,7 @@ class PlanningService:
             return
 
         if intent["type"] == "ruta":
-            # Ask which route will be covered (seller code, route code or LISTA).
-            self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={"list_shown": False})
-            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_ASK_CODE)
+            await self._start_ruta_menu(phone, chat_id)
             return
 
         if intent["type"] == "venta_directa":
@@ -227,8 +457,8 @@ class PlanningService:
             await self._propose_for_confirmation(plan, chat_id, phone, fecha_trabajo, weekday_code, sede, supervisor_name)
             return
 
-        # unknown / confirm / correct / cancel with nothing pending: just help.
-        await self.whatsapp_client.send_message(chat_id, MSG_HELP)
+        # unknown / confirm / cancel with nothing pending (and no saved plan): offer the main menu.
+        await self._send_main_menu(phone, chat_id, fecha_trabajo)
 
     async def _handle_seller_code(
         self,
@@ -449,21 +679,6 @@ class PlanningService:
             "supervisor": supervisor
         }
 
-    async def _handle_correct_in_idle(self, active: Optional[Dict[str, Any]], fecha_trabajo, chat_id: str) -> None:
-        """
-        CORREGIR with no pending draft: shows the saved plan (so the supervisor
-        can consult it before replacing it) or, if there is none, how to register
-        one. The state stays IDLE: no AWAITING_CONFIRMATION, nothing to cancel.
-        """
-        if is_real_planning(active):
-            saved_plan = await self._saved_plan_as_dict(active, fecha_trabajo.strftime("%Y-%m-%d"))
-            message = build_current_plan_message(
-                fecha_trabajo, get_weekday_code(fecha_trabajo), saved_plan, can_cancel=False
-            )
-        else:
-            message = MSG_NO_PLAN_INFO.format(fecha=fecha_trabajo.strftime("%d/%m/%Y"))
-        await self.whatsapp_client.send_message(chat_id, message)
-
     @staticmethod
     def _sheet_content(plan: Dict[str, Any]) -> Dict[str, Any]:
         """The PLANIFICACION_DIARIA columns that define a plan's content (what same_planning compares)."""
@@ -591,25 +806,10 @@ class PlanningService:
             return
 
         if intent["type"] == "correct":
-            # Don't show the draft again (the supervisor just saw it): show what is
-            # SAVED, since that is what a new planning will replace.
+            # Menu 4: show what is SAVED (not the draft the supervisor just saw) and go
+            # back to the main menu; the pending draft is discarded.
             fecha_trabajo_date = datetime.strptime(draft["fecha_trabajo"], "%Y-%m-%d").date()
-            weekday_code = get_weekday_code(fecha_trabajo_date)
-            active = await run_in_sheets_thread(
-                self.sheets_repo.find_active, draft["fecha_trabajo"], sede, supervisor_name
-            )
-            if is_real_planning(active):
-                saved_plan = await self._saved_plan_as_dict(active, draft["fecha_trabajo"])
-                message = build_current_plan_message(fecha_trabajo_date, weekday_code, saved_plan)
-            else:
-                # Same explanation as CORREGIR in IDLE, plus how to drop the pending draft.
-                message = (
-                    f"{MSG_NO_PLAN_INFO.format(fecha=fecha_trabajo_date.strftime('%d/%m/%Y'))}\n"
-                    f"{MSG_NO_PLAN_CANCEL_HINT}"
-                )
-            await self.whatsapp_client.send_message(chat_id, message)
-            # Keep AWAITING_CONFIRMATION with the same draft (the supervisor may
-            # still send CONFIRMAR) -- nothing else to do.
+            await self._handle_correct(supervisor, phone, chat_id, fecha_trabajo_date)
             return
 
         if intent["type"] == "cancel":
@@ -622,7 +822,8 @@ class PlanningService:
             await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
             return
 
-        await self.whatsapp_client.send_message(chat_id, MSG_AWAITING_CONFIRMATION_HELP)
+        # Anything else: repeat the summary with its menu.
+        await self._resend_confirmation(draft, supervisor, chat_id)
 
     # --- AWAITING_SELECTION ---
 
@@ -679,6 +880,7 @@ class PlanningService:
     async def _handle_awaiting_ruta_code(
         self,
         text: str,
+        intent: Dict[str, Any],
         entry: Dict[str, Any],
         supervisor: Dict[str, Any],
         phone: str,
@@ -687,11 +889,18 @@ class PlanningService:
         now: datetime
     ) -> None:
         """
-        While waiting for the RUTA code the supervisor may send: a seller code,
-        a route code, LISTA [page], a list number (once the list was shown),
-        or CANCELAR. Rejections keep the state so another attempt is possible.
+        The RUTA flow. What a number means depends on where the supervisor is:
+        - Menu 2 on screen, no sub-mode yet: exactly "1" / "2" / "3" pick an option
+          (by seller code / by route code / LISTA); a number with 2+ digits is a code,
+          looked up as before (seller first, then route), so "RUTA" then "10" works.
+        - Sub-mode "seller" / "route" (an option was chosen): ANY number is a code of
+          that kind, never a menu option.
+        - LISTA on screen: a number up to the size of the list is a position in it.
+        Also valid at any point: LISTA [page], CANCELAR, and the commands RUTA /
+        VENTA DIRECTA / OFICINA. Rejections keep the state so another attempt is possible.
         """
         payload = entry["payload"]
+        submode = payload.get("submode")
         ruta_input = extract_ruta_input(text)
 
         if ruta_input["type"] == "cancel":
@@ -699,49 +908,98 @@ class PlanningService:
             await self.whatsapp_client.send_message(chat_id, MSG_CANCELLED_NO_CHANGES)
             return
 
+        if intent["type"] in ("ruta", "venta_directa", "oficina"):
+            await self._handle_new_planning(intent, supervisor, phone, chat_id, message_id, now)
+            return
+
         if ruta_input["type"] == "lista":
             await self._show_route_list(ruta_input["page"], supervisor, phone, chat_id, now)
             return
 
+        routes = payload.get("routes") or []
+        list_shown = bool(payload.get("list_shown") and routes)
+
         if ruta_input["type"] != "number":
-            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_CODE_INVALID)
+            # Not a command and not a number: repeat only the step the supervisor is on.
+            if list_shown:
+                message = MSG_LIST_PICK_INVALID
+            elif submode == "seller":
+                message = MSG_SELLER_CODE_INVALID
+            elif submode == "route":
+                message = MSG_ROUTE_CODE_INVALID
+            else:
+                message = MSG_RUTA_MENU
+            await self.whatsapp_client.send_message(chat_id, message)
             return
 
         value = ruta_input["value"]
-        routes = payload.get("routes") or []
-        if payload.get("list_shown") and routes:
-            # With the list on screen, a short number is a position in it.
-            # Codes have 3+ digits, so a 1-2 digit number out of range is a typo.
+
+        if list_shown:
+            # With the list on screen a number is first of all a position in it.
+            # (If a route code collides with a position, the position wins: the
+            # list itself says "send the NUMBER".)
             position = int(value)
             if 1 <= position <= len(routes):
-                fecha_trabajo_str = payload["fecha_trabajo"]
-                fecha_trabajo_date = datetime.strptime(fecha_trabajo_str, "%Y-%m-%d").date()
-                await self._propose_route(
-                    routes[position - 1], fecha_trabajo_date, supervisor, phone, chat_id
-                )
+                fecha_trabajo_date = datetime.strptime(payload["fecha_trabajo"], "%Y-%m-%d").date()
+                await self._propose_route(routes[position - 1], fecha_trabajo_date, supervisor, phone, chat_id)
                 return
-            if len(value) < 3:
+            if len(value) == 1:
                 await self.whatsapp_client.send_message(
                     chat_id, MSG_RUTA_LIST_OUT_OF_RANGE.format(total=len(routes))
                 )
                 return
+            # 2+ digits beyond the list: maybe a code typed instead of a position. If it is
+            # not a code either and it is short, it was a mistyped position.
+            await self._handle_ruta_code(
+                value, "any", supervisor, phone, chat_id, message_id, now,
+                not_found_message=MSG_RUTA_LIST_OUT_OF_RANGE.format(total=len(routes)) if len(value) <= 2 else None
+            )
+            return
 
-        await self._handle_ruta_code(value, supervisor, phone, chat_id, message_id, now)
+        if submode == "seller":
+            await self._handle_seller_code(value, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now)
+            return
+        if submode == "route":
+            await self._handle_ruta_code(value, "route", supervisor, phone, chat_id, message_id, now)
+            return
+
+        # Menu 2 on screen, nothing chosen yet.
+        if value == "1":
+            self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={"list_shown": False, "submode": "seller"})
+            await self.whatsapp_client.send_message(chat_id, MSG_ASK_SELLER_CODE)
+            return
+        if value == "2":
+            self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={"list_shown": False, "submode": "route"})
+            await self.whatsapp_client.send_message(chat_id, MSG_ASK_ROUTE_CODE)
+            return
+        if value == "3":
+            await self._show_route_list(1, supervisor, phone, chat_id, now)
+            return
+        if len(value) == 1:
+            await self.whatsapp_client.send_message(chat_id, MSG_RUTA_MENU)  # 0, 4..9: not an option
+            return
+
+        await self._handle_ruta_code(value, "any", supervisor, phone, chat_id, message_id, now)
 
     async def _handle_ruta_code(
         self,
         code: str,
+        mode: str,
         supervisor: Dict[str, Any],
         phone: str,
         chat_id: str,
         message_id: str,
-        now: datetime
+        now: datetime,
+        not_found_message: Optional[str] = None
     ) -> None:
         """
-        A number sent in AWAITING_RUTA_CODE: seller code first (same flow and
-        validations as a plain seller code, but modalidad RUTA); if no seller
-        in the supervisor's zone has it, a route code of the supervisor's
-        zone and day.
+        A code sent in the RUTA flow.
+        - mode "any": seller code first (same flow and validations as a plain seller
+          code, but modalidad RUTA); if no seller in the supervisor's zone has it, a
+          route code of the supervisor's zone and day.
+        - mode "route": only a route code of the supervisor's zone and day.
+        `not_found_message` replaces the final "not found" answer (the LISTA flow uses
+        it to say "out of range" for short numbers).
         """
         sede = supervisor["Sede"]
         zona = str(supervisor.get("Zona") or "").strip()
@@ -752,7 +1010,9 @@ class PlanningService:
             )
             return
 
-        if await run_in_sheets_thread(self.masters_service.get_seller_by_code_and_zone, sede, code, zona):
+        if mode == "any" and await run_in_sheets_thread(
+            self.masters_service.get_seller_by_code_and_zone, sede, code, zona
+        ):
             await self._handle_seller_code(
                 code, MODALIDAD_RUTA, supervisor, phone, chat_id, message_id, now
             )
@@ -767,6 +1027,10 @@ class PlanningService:
             await self._propose_route(route_row, fecha_trabajo, supervisor, phone, chat_id)
             return
 
+        if mode == "route":
+            await self.whatsapp_client.send_message(chat_id, not_found_message or MSG_ROUTE_CODE_NOT_FOUND)
+            return
+
         if await run_in_sheets_thread(self.masters_service.get_seller_by_code, sede, code):
             # The seller exists but in another zone: same "wrong zone" answer as always.
             await self._handle_seller_code(
@@ -774,7 +1038,7 @@ class PlanningService:
             )
             return
 
-        await self.whatsapp_client.send_message(chat_id, MSG_RUTA_CODE_NOT_FOUND)
+        await self.whatsapp_client.send_message(chat_id, not_found_message or MSG_RUTA_CODE_NOT_FOUND)
 
     async def _show_route_list(
         self,
@@ -807,6 +1071,7 @@ class PlanningService:
 
         self.conversation_svc.set(phone, "AWAITING_RUTA_CODE", payload={
             "list_shown": True,
+            "submode": None,
             "routes": routes,
             "fecha_trabajo": fecha_trabajo.strftime("%Y-%m-%d")
         })

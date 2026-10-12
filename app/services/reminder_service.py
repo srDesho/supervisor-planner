@@ -42,6 +42,8 @@ from app.whatsapp.templates import (
     MSG_REMINDER_AWAITING_CONFIRMATION,
     MSG_REMINDER_AWAITING_SELECTION,
     MSG_REMINDER_AWAITING_RUTA_CODE,
+    MSG_REMINDER_AWAITING_SELLER_CODE,
+    MSG_REMINDER_MENU,
     build_escalation_alert
 )
 
@@ -173,8 +175,19 @@ class ReminderService:
                     if self._recently_active(phone):
                         skipped_active += 1
                         continue
+                    conv_phone = normalize_phone(phone)
+                    entry = self.conversation_svc.get(conv_phone)
+                    state = entry["state"] if entry else None
                     msg = self._build_reminder_message(supervisor, fecha_trabajo, dia_trabajo)
                     await self.whatsapp_client.send_message(phone, msg)
+                    if state in (None, "AWAITING_MAIN_MENU"):
+                        # The reminder ends with the numbered main menu: leave the supervisor
+                        # at that menu (for longer than a normal conversation) so "1".."4"
+                        # answers it, even if they reply much later.
+                        self.conversation_svc.set(
+                            conv_phone, "AWAITING_MAIN_MENU", payload={},
+                            ttl_minutes=self.settings.REMINDER_MENU_TTL_MINUTES
+                        )
                     # The cooldown must hold from now on; the Sheet is written in
                     # one batch at the end of the tick. (Memory only, no Sheets I/O.)
                     self.supervisors_repo.stamp_last_reminder_in_cache(phone, stamp)
@@ -223,9 +236,13 @@ class ReminderService:
             return MSG_REMINDER_AWAITING_SELECTION
         if entry and entry["state"] == "AWAITING_RUTA_CODE":
             return MSG_REMINDER_AWAITING_RUTA_CODE
-        return MSG_REMINDER_PENDING_SUBMISSION.format(
+        if entry and entry["state"] == "AWAITING_SELLER_CODE":
+            return MSG_REMINDER_AWAITING_SELLER_CODE
+        # Menu 5: "no planning yet" reminder + the numbered main menu.
+        pending = MSG_REMINDER_PENDING_SUBMISSION.format(
             fecha=fecha_trabajo.strftime("%d/%m/%Y"), dia=dia_trabajo
         )
+        return f"{pending}\n\n{MSG_REMINDER_MENU}"
 
     def _within_cooldown(self, supervisor: Dict[str, Any], now: datetime) -> bool:
         last = self._parse_timestamp(supervisor.get("Ultimo_Recordatorio"))
